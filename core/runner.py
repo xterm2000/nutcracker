@@ -25,7 +25,7 @@ class Result:
 
 
 class Runner:
-    def __init__(self, modules, ctx, progress_every: int = 500_000, jobs: int = 1):
+    def __init__(self, modules, ctx, progress_every: int = 1_000_000, jobs: int = 1):
         self.modules = modules
         self.ctx = ctx
         self.matcher = ctx.matcher

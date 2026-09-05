@@ -12,7 +12,7 @@ REPEAT_UNITS = ["ab", "abc", "abcd", "12", "123", "1234", "xyz", "asd", "qwe", "
 
 class SequenceModule:
     name = "sequences"
-    order = 12
+    order = 8
 
     def generate(self, ctx):
         seen: set[str] = set()

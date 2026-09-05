@@ -1,6 +1,9 @@
 """Dates & birthdays: bare years, DDMMYYYY / MMDDYYYY / YYYYMMDD and short
 forms with and without separators, month-name+year, season+year. If a --dob
-hint is given, that exact date is expanded first and exhaustively."""
+hint is given, that exact date is expanded first and exhaustively.
+
+`date_forms(d, m, y)` (the per-date renderer) is also reused by the
+`dobwords` module to glue birthday-derived dates onto hint tokens."""
 
 from __future__ import annotations
 
@@ -17,11 +20,11 @@ SEASONS = ["spring", "summer", "autumn", "fall", "winter"]
 YEAR_MIN, YEAR_MAX = 1940, CURRENT_YEAR + 2
 
 
-def _date_forms(d: int, m: int, y: int):
+def date_forms(d: int, m: int, y: int):
     dd, mm = f"{d:02d}", f"{m:02d}"
     yyyy, yy = str(y), str(y)[2:]
     yield from (
-        dd + mm + yyyy, mm + dd + yyyy, yyyy + mm + dd,
+        dd + mm + yyyy, mm + dd + yyyy, yyyy + mm + dd, yyyy + dd + mm,
         dd + mm + yy, mm + dd + yy, yy + mm + dd,
         f"{d}{m}{yyyy}", f"{d}-{m}-{yyyy}", dd + mm, mm + dd,
     )
@@ -33,7 +36,7 @@ def _date_forms(d: int, m: int, y: int):
 
 class DateModule:
     name = "dates"
-    order = 15
+    order = 14
 
     def generate(self, ctx):
         seen: set[str] = set()
@@ -48,7 +51,7 @@ class DateModule:
         if dob:
             d, m, y = dob
             for yr in range(y - 2, y + 3):
-                for form in _date_forms(d, m, yr):
+                for form in date_forms(d, m, yr):
                     if emit(form):
                         yield form
             for suf in (str(y), str(y)[2:], f"{d:02d}{m:02d}"):
@@ -61,7 +64,7 @@ class DateModule:
         for y in range(YEAR_MIN, YEAR_MAX + 1):
             for m in range(1, 13):
                 for d in range(1, calendar.monthrange(y, m)[1] + 1):
-                    for form in _date_forms(d, m, y):
+                    for form in date_forms(d, m, y):
                         if emit(form):
                             yield form
 

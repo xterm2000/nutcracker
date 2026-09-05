@@ -20,7 +20,7 @@ COMMON_6 = [
 
 class PinModule:
     name = "pins"
-    order = 8
+    order = 5
 
     def __init__(self, six_digit: bool = False):
         self.six_digit = six_digit

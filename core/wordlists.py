@@ -16,11 +16,18 @@ WORDLISTS = [
 ]
 
 
+# the frequency-sorted English list -- its line number is a usable "how common
+# is this word in ordinary English" rank, which `wordchain` uses to keep its
+# run-together decomposition from tiling a password out of rare 2-3 char cruft.
+_RANK_LIST = "english_wikipedia.txt"
+
+
 class WordlistBundle:
     """A de-duplicated, best-order-first list of base words."""
 
-    def __init__(self, words: list[str]):
+    def __init__(self, words: list[str], wiki_rank: dict[str, int] | None = None):
         self.words = words
+        self.wiki_rank = wiki_rank or {}
 
     def __iter__(self):
         return iter(self.words)
@@ -31,26 +38,37 @@ class WordlistBundle:
     def top(self, n: int) -> list[str]:
         return self.words[:n]
 
+    def is_common(self, word: str, cutoff: int = 25_000) -> bool:
+        """True if `word` is within the top `cutoff` of the English frequency
+        list -- i.e. a word an ordinary person actually uses, not list cruft."""
+        return self.wiki_rank.get(word.lower(), 1 << 30) < cutoff
 
-def load(data_dir: str, cap: int | None = None) -> WordlistBundle:
+
+def load(data_dir: str, cap: int | None = None,
+         extra: list[str] | None = None) -> WordlistBundle:
     seen: set[str] = set()
     words: list[str] = []
-    for name in WORDLISTS:
-        path = os.path.join(data_dir, name)
+    wiki_rank: dict[str, int] = {}
+    # user-supplied lists load first so they take priority in dictionary/rules order
+    paths = list(extra or []) + [os.path.join(data_dir, n) for n in WORDLISTS]
+    for path in paths:
+        name = os.path.basename(path)
         if not os.path.isfile(path):
             print(f"  ! missing wordlist: {path}", file=sys.stderr)
             continue
         count = 0
         with open(path, encoding="utf-8", errors="ignore") as fh:
-            for line in fh:
+            for idx, line in enumerate(fh):
                 token = line.strip().split()  # "word" or "word <freq>"
                 if not token:
                     continue
                 w = token[0]
+                if name == _RANK_LIST and w.lower() not in wiki_rank:
+                    wiki_rank[w.lower()] = idx
                 if w and w not in seen:
                     seen.add(w)
                     words.append(w)
                     count += 1
                     if cap and count >= cap:
                         break
-    return WordlistBundle(words)
+    return WordlistBundle(words, wiki_rank)

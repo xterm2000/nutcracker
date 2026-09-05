@@ -54,12 +54,21 @@ class Hints:
     def dob_parts(self) -> tuple[int, int, int] | None:
         if not self.dob:
             return None
-        for fmt in (
+        raw = self.dob.strip()
+        fmts = [
             "%Y-%m-%d", "%Y/%m/%d", "%d/%m/%Y", "%m/%d/%Y",
             "%d-%m-%Y", "%d.%m.%Y", "%d %B %Y", "%d %b %Y", "%B %d %Y",
-        ):
+        ]
+        # separator-less digit strings, dispatched by length so a 4-digit
+        # year can't be mistaken for a 2-digit one (day-first preferred)
+        if raw.isdigit():
+            if len(raw) == 8:
+                fmts += ["%d%m%Y", "%m%d%Y", "%Y%m%d"]
+            elif len(raw) == 6:
+                fmts += ["%d%m%y", "%m%d%y", "%y%m%d"]
+        for fmt in fmts:
             try:
-                dt = datetime.strptime(self.dob.strip(), fmt)
+                dt = datetime.strptime(raw, fmt)
                 return (dt.day, dt.month, dt.year)
             except ValueError:
                 continue
@@ -70,8 +79,10 @@ class Hints:
 class Limits:
     word_cap: int | None = None       # per-wordlist load cap
     module_budget: int = 3_000_000    # max candidates per module
-    global_budget: int = 500_000_000   # hard stop across all modules
-    combinator_words: int = 8_000       # top-N words fed to the combinator
+    global_budget: int = 10_000_000   # hard stop across all modules
+    chain_vocab: int = 800            # top-N words fed to the word-chain generator
+    chain_words: int = 3              # max words per chain (hash mode)
+    dob_depth: int = 1               # dobwords structure depth (needs --dob)
     pin_six_digit: bool = False       # also sweep the full 6-digit PIN space
 
 

@@ -3,6 +3,7 @@ cutoff still covers every word at shallow depth)."""
 
 from __future__ import annotations
 
+from core import rules_engine as _rules_engine
 from core.context import CURRENT_YEAR
 
 LEET_MAP = {"a": "@", "e": "3", "i": "1", "o": "0", "s": "$", "t": "7"}
@@ -56,7 +57,34 @@ class RulesModule:
     name = "rules"
     order = 20
 
+    def __init__(self, ruleset=None):
+        # when set (via --rules-file), replaces the built-in mangling below
+        self.ruleset = ruleset
+
+    def note(self, ctx):
+        if self.ruleset is not None:
+            return f"using {len(self.ruleset)} rules from {self.ruleset.source}"
+        return None
+
     def generate(self, ctx):
+        if self.ruleset is not None:
+            yield from self._generate_ruleset(ctx)
+        else:
+            yield from self._generate_builtin(ctx)
+
+    def _generate_ruleset(self, ctx):
+        words = list(ctx.wordlists)
+        for w in words:                       # raw words first (cheap, high value)
+            yield w
+        # rule-major: a budget cut then leaves the first N rules fully applied
+        # across every word rather than a few words fully mangled.
+        for toks in self.ruleset.rules:
+            for w in words:
+                out = _rules_engine.apply(w, toks)
+                if out:
+                    yield out
+
+    def _generate_builtin(self, ctx):
         words = list(ctx.wordlists)
         for w in words:
             yield w.lower()

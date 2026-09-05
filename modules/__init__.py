@@ -11,28 +11,48 @@ Each module exposes:
 
 from __future__ import annotations
 
-from modules.combinator import CombinatorModule
 from modules.context_based import ContextModule
 from modules.dates import DateModule
 from modules.dictionary import DictionaryModule
+from modules.dobwords import DobWordsModule
+from modules.hybrid import HybridModule
 from modules.keyboard import KeyboardModule
 from modules.mask import MaskModule
-from modules.passphrase import PassphraseModule
 from modules.phone import PhoneModule
 from modules.pins import PinModule
 from modules.rules import RulesModule
 from modules.sequences import SequenceModule
+from modules.wordchain import WordChainModule
 
 ALWAYS = [
-    PassphraseModule, ContextModule, PhoneModule, PinModule, DictionaryModule,
+    ContextModule, PhoneModule, PinModule, DictionaryModule,
     SequenceModule, KeyboardModule, DateModule, RulesModule,
 ]
 
 
-def build(only=None, skip=None, *, combinator_words=800, mask=None, brute=False,
-          charset="d", min_len=1, max_len=8):
+def build(only=None, skip=None, *, mode="plaintext", chain_words=3, chain_vocab=800,
+          dob_depth=1, mask=None, brute=False, charset="d", min_len=1, max_len=8,
+          ruleset=None, hybrid_mask=None, hybrid_side="both", hybrid_vocab=2000):
     insts = [cls() for cls in ALWAYS]
-    insts.append(CombinatorModule(words=combinator_words))
+
+    if ruleset is not None:
+        for m in insts:
+            if m.name == "rules":
+                m.ruleset = ruleset
+                # words x rules multiplies fast; give it room under the global cap
+                m.budget = 25_000_000
+
+    if hybrid_mask:
+        insts.append(HybridModule(mask=hybrid_mask, side=hybrid_side, vocab=hybrid_vocab))
+
+    wc = WordChainModule(chain_words=chain_words, vocab=chain_vocab)
+    if mode == "hash":
+        # hash-mode wordchain is a big generator with low relative yield --
+        # run it after dictionary/rules rather than ahead of them
+        wc.order = 26
+    insts.append(wc)
+
+    insts.append(DobWordsModule(depth=dob_depth))
     if mask or brute:
         insts.append(MaskModule(mask=mask, brute=brute, charset=charset,
                                 min_len=min_len, max_len=max_len))
@@ -47,4 +67,4 @@ def build(only=None, skip=None, *, combinator_words=800, mask=None, brute=False,
 
 
 def names():
-    return [cls().name for cls in ALWAYS] + ["combinator", "mask"]
+    return [cls().name for cls in ALWAYS] + ["wordchain", "dobwords", "hybrid", "mask"]

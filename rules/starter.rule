@@ -1,0 +1,99 @@
+# starter.rule -- compact, high-value ruleset for:  ./crack.py --rules-file rules/starter.rule
+#
+# Hashcat-compatible function syntax. One rule per line; functions are applied
+# left-to-right to each dictionary word to produce one candidate. Full-line '#'
+# comments and blank lines are ignored (hashcat treats '#' as a literal, so an
+# inline comment would be taken as text -- keep comments on their own line).
+#
+# When --rules-file is given it REPLACES the module's built-in mangling.
+
+# --- identity / case ---
+:
+l
+u
+c
+C
+t
+
+# --- append a single common digit ---
+$1
+$2
+$0
+$7
+$9
+$3
+
+# --- append digit runs ---
+$1 $2 $3
+$1 $2 $3 $4
+$0 $0
+$1 $1
+$6 $9
+c $1
+c $1 $2 $3
+
+# --- append recent years ---
+$1 $9 $9 $0
+$2 $0 $0 $0
+$2 $0 $1 $9
+$2 $0 $2 $0
+$2 $0 $2 $1
+$2 $0 $2 $2
+$2 $0 $2 $3
+$2 $0 $2 $4
+$2 $0 $2 $5
+c $2 $0 $2 $4
+c $2 $0 $2 $5
+
+# --- append punctuation / bang ---
+$!
+$! $!
+$.
+$@
+$#
+$*
+$1 $!
+c $!
+c $1 $!
+c $2 $0 $2 $4 $!
+
+# --- prepend ---
+^1
+^!
+^1 ^2 ^3
+^0 ^0
+
+# --- reverse / duplicate / reflect ---
+r
+d
+f
+c f
+c r
+
+# --- leet substitutions ---
+sa@
+se3
+si1
+so0
+ss$
+sa4
+si!
+sa@ se3
+so0 si1
+sa@ se3 si1 so0
+sa@ se3 si1 so0 ss$
+c sa@ se3
+c sa@ $1
+c se3 $1 $2 $3
+c so0 $2 $0 $2 $4
+ss$ $1 $2 $3
+
+# --- toggle / edge-char tricks ---
+T0
+c T0
+z1
+Z1
+$s
+c $s
+] $1
+[ $1
