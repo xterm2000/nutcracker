@@ -25,16 +25,48 @@ class Result:
 
 
 class Runner:
-    def __init__(self, modules, ctx, progress_every: int = 500_000):
+    def __init__(self, modules, ctx, progress_every: int = 500_000, jobs: int = 1):
         self.modules = modules
         self.ctx = ctx
         self.matcher = ctx.matcher
         self.progress_every = progress_every
+        self.jobs = jobs
+        self.executor = None
+        if jobs > 1:
+            from core.parallel import ParallelExecutor
+            self.executor = ParallelExecutor(jobs, ctx.matcher)
 
     def _budget_for(self, mod) -> int:
         return getattr(mod, "budget", None) or self.ctx.limits.module_budget
 
+    def _run_sequential(self, mod, budget: int, remaining_global: int, m0: float):
+        tried = 0
+        for cand in mod.generate(self.ctx):
+            tried += 1
+            if self.matcher.matches(cand):
+                return cand, tried
+            if tried >= budget or tried >= remaining_global:
+                break
+            if tried % self.progress_every == 0:
+                rate = tried / (time.time() - m0 + 1e-9)
+                print(f"    [{mod.name}] {tried:,} tried ({rate:,.0f}/s)")
+        return None, tried
+
+    def _run_parallel(self, mod, budget: int, remaining_global: int, m0: float):
+        return self.executor.run_module(
+            mod.generate(self.ctx), budget, remaining_global,
+            progress_every=self.progress_every, mod_name=mod.name, t0=m0,
+        )
+
     def run(self) -> Result:
+        try:
+            return self._run()
+        finally:
+            if self.executor is not None:
+                self.executor.pool.close()
+                self.executor.pool.join()
+
+    def _run(self) -> Result:
         t0 = time.time()
         total = 0
         stats: list[ModuleStat] = []
@@ -52,25 +84,23 @@ class Runner:
                     print(f"  [{mod.name}] {msg}")
 
             budget = self._budget_for(mod)
+            remaining_global = gbudget - total
             m0 = time.time()
-            mtried = 0
-            hit = False
             try:
-                for cand in mod.generate(self.ctx):
-                    mtried += 1
-                    total += 1
-                    if self.matcher.matches(cand):
-                        stats.append(ModuleStat(mod.name, mtried, time.time() - m0, False))
-                        return Result(cand, mod.name, total, total, time.time() - t0, stats)
-                    if mtried >= budget or total >= gbudget:
-                        hit = True
-                        break
-                    if mtried % self.progress_every == 0:
-                        rate = mtried / (time.time() - m0 + 1e-9)
-                        print(f"    [{mod.name}] {mtried:,} tried ({rate:,.0f}/s)")
+                if self.executor is not None:
+                    found, mtried = self._run_parallel(mod, budget, remaining_global, m0)
+                else:
+                    found, mtried = self._run_sequential(mod, budget, remaining_global, m0)
             except Exception as exc:  # a bad module shouldn't kill the run
                 print(f"    [{mod.name}] error: {exc!r}")
+                found, mtried = None, 0
 
+            total += mtried
+            if found is not None:
+                stats.append(ModuleStat(mod.name, mtried, time.time() - m0, False))
+                return Result(found, mod.name, total, total, time.time() - t0, stats)
+
+            hit = mtried >= budget or total >= gbudget
             stats.append(ModuleStat(mod.name, mtried, time.time() - m0, hit))
             tag = " (budget hit)" if hit and total < gbudget else ""
             print(f"  [{mod.name}] done: {mtried:,} tried in {time.time() - m0:.1f}s{tag}")

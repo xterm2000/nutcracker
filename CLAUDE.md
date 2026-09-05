@@ -21,6 +21,9 @@ imported lazily and only when `--algo bcrypt` is used.
 - `data/*.txt` (~280k lines) are committed inputs — never regenerate them programmatically.
 - Global candidate budgets default high (3M/module, 30M total); an unbounded new generator
   can run for minutes before the budget stops it. Keep generators breadth-first.
+- `--module-budget` / `--budget` take a size string (`_budget_size` in `crack.py`), not a
+  raw int: bare number = millions (`3` -> 3,000,000), or a `k`/`m`/`g` suffix. Write doc/
+  Makefile examples in that form, not as raw digit counts.
 
 ## Running
 

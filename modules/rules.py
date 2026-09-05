@@ -8,7 +8,7 @@ from core.context import CURRENT_YEAR
 LEET_MAP = {"a": "@", "e": "3", "i": "1", "o": "0", "s": "$", "t": "7"}
 SUFFIXES = ["1", "12", "123", "1234", "!", "!!", "12345", "007", "69", "01", "00"]
 # recent years first -- they are far more common and we want them cheap
-YEARS = [str(y) for y in range(CURRENT_YEAR + 2, 1949, -1)]
+YEARS = [str(y) for y in range(CURRENT_YEAR + 2, 1800, -1)]
 PREFIXES = ["1", "123", "!"]
 
 

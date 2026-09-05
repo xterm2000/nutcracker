@@ -42,6 +42,17 @@ def _csv(s):
     return [x.strip() for x in s.split(",") if x.strip()]
 
 
+def _budget_size(s):
+    """Parse a candidate-budget size: bare number = millions ('12' -> 12,000,000);
+    'k'/'m'/'g' suffix picks the unit explicitly ('500k' -> 500,000)."""
+    s = s.strip().lower()
+    mult = 1_000_000
+    if s and s[-1] in "kmg":
+        mult = {"k": 1_000, "m": 1_000_000, "g": 1_000_000_000}[s[-1]]
+        s = s[:-1]
+    return int(float(s) * mult)
+
+
 def build_args():
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -77,13 +88,18 @@ def build_args():
 
     lim = ap.add_argument_group("limits")
     lim.add_argument("--limit", type=int, help="cap words loaded per wordlist")
-    lim.add_argument("--module-budget", type=int, default=3_000_000,
-                     help="max candidates per module (default 3M)")
-    lim.add_argument("--budget", type=int, default=30_000_000,
-                     help="global candidate hard stop (default 30M)")
+    lim.add_argument("--module-budget", type=_budget_size, default=3_000_000,
+                     help="max candidates per module: bare number = millions, "
+                          "or use a k/m/g suffix, e.g. 3, 500k, 1g (default 3 = 3M)")
+    lim.add_argument("--budget", type=_budget_size, default=30_000_000,
+                     help="global candidate hard stop: bare number = millions, "
+                          "or use a k/m/g suffix (default 30 = 30M)")
     lim.add_argument("--combinator-words", type=int, default=800,
                      help="top-N words fed to the combinator (default 800)")
     lim.add_argument("--pin6", action="store_true", help="also sweep the full 6-digit PIN space")
+    lim.add_argument("--jobs", type=int, default=1,
+                     help="worker processes for testing candidates (default 1 = sequential); "
+                          "mainly worth raising for --algo bcrypt")
     return ap
 
 
@@ -149,9 +165,10 @@ def main() -> int:
     print("Modules:", " -> ".join(m.name for m in mods))
     if hints.tokens():
         print("Hints  :", ", ".join(hints.tokens()))
-    print(f"Budgets: {limits.module_budget:,}/module, {limits.global_budget:,} total\n")
+    print(f"Budgets: {limits.module_budget:,}/module, {limits.global_budget:,} total")
+    print(f"Jobs   : {args.jobs}\n")
 
-    result = Runner(mods, ctx).run()
+    result = Runner(mods, ctx, jobs=args.jobs).run()
 
     print()
     if result.found is not None:

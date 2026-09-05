@@ -70,8 +70,8 @@ class Hints:
 class Limits:
     word_cap: int | None = None       # per-wordlist load cap
     module_budget: int = 3_000_000    # max candidates per module
-    global_budget: int = 30_000_000   # hard stop across all modules
-    combinator_words: int = 800       # top-N words fed to the combinator
+    global_budget: int = 500_000_000   # hard stop across all modules
+    combinator_words: int = 8_000       # top-N words fed to the combinator
     pin_six_digit: bool = False       # also sweep the full 6-digit PIN space
 
 

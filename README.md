@@ -152,19 +152,23 @@ else is a literal.
 
 ### Tune the effort
 
+`--module-budget` and `--budget` take a **size**, not a raw candidate count: a bare
+number means millions (`3` = 3,000,000), or add a `k`/`m`/`g` suffix to pick the unit
+explicitly (`500k` = 500,000, `1g` = 1,000,000,000).
+
 ```bash
 # quick pass: cap each wordlist, shrink budgets
-./crack.py -p 'hunter2' --limit 5000 --module-budget 500000 --budget 5000000
+./crack.py -p 'hunter2' --limit 5000 --module-budget 500k --budget 5
 
 # deeper pass: bigger combinator, full 6-digit PIN sweep
-./crack.py -p 'hunter2' --combinator-words 2000 --module-budget 20000000 --pin6
+./crack.py -p 'hunter2' --combinator-words 2000 --module-budget 20 --pin6
 ```
 
 | Flag | Meaning | Default |
 |------|---------|---------|
 | `--limit N` | words loaded per wordlist file | all |
-| `--module-budget N` | max candidates per module | 3,000,000 |
-| `--budget N` | global candidate hard stop | 30,000,000 |
+| `--module-budget SIZE` | max candidates per module (bare=millions, or k/m/g) | `3` (3M) |
+| `--budget SIZE` | global candidate hard stop (bare=millions, or k/m/g) | `30` (30M) |
 | `--combinator-words N` | top-N words fed to the word combinator | 800 |
 | `--pin6` | also sweep the full 6-digit PIN space (10⁶) | off |
 
