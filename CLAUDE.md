@@ -19,7 +19,7 @@ the archive uses WinZip AES; ZipCrypto archives need nothing).
 - No test suite, no linter, no CI. Verify changes by running `./crack.py` against a known
   target and checking the reported rank/module.
 - Git repo initialized 2026-09-03; **no commits yet**, branch `master`.
-- `data/*.txt` (~320k lines) are committed inputs — never regenerate them programmatically.
+- `data/*.txt` (~340k lines) are committed inputs — never regenerate them programmatically.
 - Global candidate budgets default high (3M/module, 30M total); an unbounded new generator
   can run for minutes before the budget stops it. Keep generators breadth-first.
 - `--module-budget` / `--budget` take a size string (`_budget_size` in `crack.py`), not a
@@ -81,7 +81,8 @@ module list → `Runner` iterates each module's `generate(ctx)`, testing every c
   preferred; `crack.py` warns if `--dob` won't parse). `Limits` holds all
   the caps. `CURRENT_YEAR` is defined here and imported widely for year-suffix generation.
 - **`core/wordlists.py`** — loads `data/*.txt` in a fixed cheapest-first order (passwords,
-  names, surnames, tv/film, world cities, wikipedia) into one deduped `WordlistBundle`. Files are `word` or
+  names, intl given names, surnames, tv/film, world cities, wikipedia) into one deduped
+  `WordlistBundle`. Files are `word` or
   `word <freq>` per line; only the first token is used. `--limit` caps words *per file*.
   `--wordlist PATH` (repeatable) prepends extra user lists — loaded **before** the built-ins
   so they take priority in `dictionary`/`rules` order (bring your own rockyou / CeWL list).
@@ -176,7 +177,7 @@ real-world `.rule` files still load. Sample: `rules/starter.rule` (~73 rules).
 
 ## Data
 
-`data/` holds the seven plaintext wordlists (~320k lines total), committed to the repo. They are
+`data/` holds the eight plaintext wordlists (~340k lines total), committed to the repo. They are
 inputs, not generated — don't rewrite them programmatically.
 
 `rules/` holds committed hashcat-style rule files (`starter.rule`) for `--rules-file`. Also

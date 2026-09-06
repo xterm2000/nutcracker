@@ -10,6 +10,7 @@ WORDLISTS = [
     "passwords.txt",
     "female_names.txt",
     "male_names.txt",
+    "given_names_intl.txt",
     "surnames.txt",
     "us_tv_and_film.txt",
     "world_cities.txt",
