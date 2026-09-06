@@ -45,11 +45,18 @@ class ContextModule:
                     if emit(base + suf):
                         yield base + suf
 
-        # pairwise glue of hint tokens (e.g. first+last, user+year already above)
+        # pairwise glue of hint tokens, tried in a few case forms so a lower-
+        # case run-together like 'jimmybbq' is reached, not just 'Jimmybbq'
+        # (first+last / user+year are handled above)
+        def _cases(s):
+            return list(dict.fromkeys((s, s.lower(), s.capitalize())))
+
         for i, a in enumerate(tokens):
             for b in tokens[i + 1:]:
-                for g in ("", ".", "_", "-"):
-                    if emit(a + g + b):
-                        yield a + g + b
-                    if emit(b + g + a):
-                        yield b + g + a
+                for av in _cases(a):
+                    for bv in _cases(b):
+                        for g in ("", ".", "_", "-"):
+                            if emit(av + g + bv):
+                                yield av + g + bv
+                            if emit(bv + g + av):
+                                yield bv + g + av

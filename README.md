@@ -381,16 +381,16 @@ code (`2`) abort the script.
 set -euo pipefail
 
 # --- target -----------------------------------------------------------------
-PASSP="mama1604solo1983sasha"              # only used to build a self-test hash
+PASSP="jimmybbq"                           # only used to build a self-test hash
 ALGO="md5"
 HASH="${HASH:-$(printf '%s' "$PASSP" | md5sum | awk '{print $1}')}"   # or: export HASH=...
 
 # --- what you know about the owner ----------------------------------------
-WORDS="solomakha mama sasha"               # space-separated; each becomes --word X
-DOB="22041983"                             # empty string to disable
+WORDS="Barbeque bbq"                        # space-separated; each becomes --word X
+DOB=""                                     # empty string to disable
 UNAME=""                                   # --user  : login / handle
 EMAIL=""                                   # --email : full address
-NAME=""                                    # --name  : full name, e.g. "Mary Smith"
+NAME="Jimmy Barbeque"                       # --name  : full name, e.g. "Mary Smith"
 
 # --- extra inputs -----------------------------------------------------------
 WORDLIST=""                                # --wordlist   : extra list, loaded first (rockyou.txt, cewl.txt)
