@@ -38,7 +38,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from core.context import CrackContext, Hints, Limits
 from core.matcher import HashMatcher, PlaintextMatcher, ZipMatcher
-from core import rules_engine, wordlists
+from core import rules_engine, shapes, term, wordlists
 import modules
 from core.runner import Runner
 
@@ -133,6 +133,11 @@ def build_args():
     lim.add_argument("--jobs", type=int, default=1,
                      help="worker processes for testing candidates (default 1 = sequential); "
                           "mainly worth raising for --algo bcrypt or --zip")
+
+    out = ap.add_argument_group("output")
+    out.add_argument("--color", choices=["auto", "always", "never"], default="auto",
+                     help="colourise output (default auto: on when stdout is a terminal; "
+                          "also honours NO_COLOR)")
     return ap
 
 
@@ -173,6 +178,7 @@ def resolve_target(args):
 
 def main() -> int:
     args = build_args().parse_args()
+    term.configure(args.color)
 
     if args.list_modules:
         print("modules:", ", ".join(modules.names()))
@@ -200,11 +206,13 @@ def main() -> int:
             print(f"  ! cannot read --rules-file: {exc}")
             return 1
 
-    print(f"\nTarget : {label}")
-    print("Loading wordlists...")
+    L, D, A = term.label, term.dim, term.accent
+
+    print(f"\n{L('Target :')} {label}")
+    print(D("Loading wordlists..."))
     bundle = wordlists.load(DATA_DIR, limits.word_cap, extra=args.wordlist)
     extra_note = f" (+{len(args.wordlist)} custom)" if args.wordlist else ""
-    print(f"  {len(bundle):,} unique base words from {DATA_DIR}{extra_note}")
+    print(D(f"  {len(bundle):,} unique base words from {DATA_DIR}{extra_note}"))
 
     ctx = CrackContext(matcher=matcher, wordlists=bundle, hints=hints,
                        limits=limits, data_dir=DATA_DIR, plaintext_target=plaintext)
@@ -218,33 +226,51 @@ def main() -> int:
         ruleset=ruleset, hybrid_mask=args.hybrid_mask,
         hybrid_side=args.hybrid_side, hybrid_vocab=args.hybrid_vocab,
     )
-    print(f"Mode   : {ctx.mode}")
-    print("Modules:", " -> ".join(m.name for m in mods))
+    print(f"{L('Mode   :')} {ctx.mode}")
+    print(f"{L('Modules:')} {D(' -> '.join(m.name for m in mods))}")
     if ruleset is not None:
-        print(f"Rules  : {len(ruleset):,} from {args.rules_file}")
+        print(f"{L('Rules  :')} {len(ruleset):,} from {args.rules_file}")
     if hints.tokens():
-        print("Hints  :", ", ".join(hints.tokens()))
+        print(f"{L('Hints  :')} {', '.join(hints.tokens())}")
     if args.dob and hints.dob_parts() is None:
-        print(f"  ! --dob {args.dob!r} not understood (try YYYY-MM-DD or DDMMYYYY) "
-              "-- date-based attacks disabled")
-    print(f"Budgets: {limits.module_budget:,}/module, {limits.global_budget:,} total")
-    print(f"Jobs   : {args.jobs}\n")
+        print(term.warn(f"  ! --dob {args.dob!r} not understood (try YYYY-MM-DD or DDMMYYYY) "
+                        "-- date-based attacks disabled"))
+    print(f"{L('Budgets:')} {limits.module_budget:,}/module, {limits.global_budget:,} total")
+    print(f"{L('Jobs   :')} {args.jobs}\n")
 
     result = Runner(mods, ctx, jobs=args.jobs).run()
 
     print()
     if result.found is not None:
-        print(f"  CRACKED: {result.found!r}")
-        print(f"  via module '{result.module}', rank #{result.rank:,}, "
-              f"{result.elapsed:.1f}s total")
+        print(f"  {term.ok('CRACKED')}: {result.found!r}")
+        print(D(f"  via module '{result.module}', rank #{result.rank:,}, "
+                f"{result.elapsed:.1f}s total"))
+
+        vline, tips = shapes.verdict(result.module, result.rank or 1,
+                                     result.found, limits.global_budget)
+        colour = term.bad if vline.startswith(("trivial", "very weak")) else term.warn
+        print(f"\n  {L('assessment:')} {colour(vline)}")
+        print(D("  do better:"))
+        for tip in tips:
+            print(f"    {D('-')} {tip}")
         return 0
-    print(f"  NOT FOUND after {result.total_tried:,} candidates in {result.elapsed:.1f}s")
-    print("  per-module:")
+
+    print(f"  {term.warn('NOT FOUND')} after {result.total_tried:,} candidates "
+          f"in {result.elapsed:.1f}s")
+    print(D("  per-module:"))
     for s in result.stats:
-        tag = " (budget hit)" if s.budget_hit else ""
-        print(f"    {s.name:<12} {s.tried:>12,}  {s.elapsed:6.1f}s{tag}")
-    print("  -> not reachable with the enabled attacks; widen with --mask/--brute,"
-          " raise --module-budget, or add hints.")
+        tag = term.dim(" (budget hit)") if s.budget_hit else ""
+        print(D(f"    {s.name:<12} {s.tried:>12,}  {s.elapsed:6.1f}s") + tag)
+    print(D("  -> not reachable with the enabled attacks; widen with --mask/--brute,"
+            " raise --module-budget, or add hints."))
+
+    if plaintext is not None:
+        findings = shapes.diagnose(plaintext, hints.tokens())
+        if findings:
+            print(f"\n  {L('shape analysis')} "
+                  + D("(why the enabled attacks may have missed it):"))
+            for f in findings:
+                print(f"    {D('-')} {f}")
     return 2
 
 

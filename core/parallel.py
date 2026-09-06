@@ -18,6 +18,8 @@ from __future__ import annotations
 import multiprocessing as mp
 import time
 
+from core import term
+
 _matcher = None
 _found = None
 
@@ -91,5 +93,5 @@ class ParallelExecutor:
             if progress_every and t0 is not None and tried - last_print >= progress_every:
                 last_print = tried
                 rate = tried / (time.time() - t0 + 1e-9)
-                print(f"    [{mod_name}] {tried:,} tried ({rate:,.0f}/s)")
+                print(term.dim(f"    [{mod_name}] {tried:,} tried ({rate:,.0f}/s)"))
         return found, tried

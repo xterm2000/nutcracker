@@ -125,6 +125,19 @@ Reports something like `CRACKED: 'Summer2024!' via module 'rules', rank #1,234,5
 A low rank means the password is weak; "NOT FOUND" means none of the enabled attacks
 reached it within budget.
 
+A `CRACKED` result is followed by an **assessment** — a strength tier, what the
+password essentially *is* (the module that found it), and a few pointed
+better-practice tips:
+
+```
+  assessment: weak -- a dictionary word with predictable mangling (case, digits, punctuation, leet)
+  do better:
+    - only 11 characters -- too short whatever the composition; aim for 16+
+    - Capitalise + digits + trailing symbol is the single most common pattern
+    - prefer length over complexity: 4-5 unrelated random words, or a password manager
+    - never reuse it
+```
+
 ### Audit without leaking the password into your shell history
 
 ```bash
@@ -354,6 +367,7 @@ explicitly (`500k` = 500,000, `1g` = 1,000,000,000).
 | `--chain-vocab N` | top-N words fed to the hash-mode word-chain generator | 800 |
 | `--chain-words N` | max words per chain in hash mode (plaintext is unbounded) | 3 |
 | `--pin6` | also sweep the full 6-digit PIN space (10⁶) | off |
+| `--color` | `auto` / `always` / `never` (auto = on for a terminal; honours `NO_COLOR`) | `auto` |
 
 ### Wrap a run in a script
 
@@ -374,6 +388,14 @@ HASH="${HASH:-$(printf '%s' "$PASSP" | md5sum | awk '{print $1}')}"   # or: expo
 # --- what you know about the owner ----------------------------------------
 WORDS="solomakha mama sasha"               # space-separated; each becomes --word X
 DOB="22041983"                             # empty string to disable
+UNAME=""                                   # --user  : login / handle
+EMAIL=""                                   # --email : full address
+NAME=""                                    # --name  : full name, e.g. "Mary Smith"
+
+# --- extra inputs -----------------------------------------------------------
+WORDLIST=""                                # --wordlist   : extra list, loaded first (rockyou.txt, cewl.txt)
+RULES=""                                   # --rules-file : hashcat-style ruleset (rules/starter.rule)
+HYBRID_MASK=""                             # --hybrid-mask: e.g. '?d?d?d?d' (adds the hybrid module)
 
 # --- effort knobs ---------------------------------------------------------
 BUDGET=150            # global budget, millions
@@ -388,8 +410,14 @@ read -ra WORD_LIST <<< "$WORDS"
 ARGS=(--hash "$HASH" --algo "$ALGO"
       --budget "$BUDGET" --module-budget "$MODULE_BUDGET"
       --depth "$DEPTH" --jobs "$JOBS")
-[[ -n "$DOB"  ]] && ARGS+=(--dob "$DOB")
-[[ "$BRUTE" == 1 ]] && ARGS+=(--brute)
+[[ -n "$DOB"         ]] && ARGS+=(--dob "$DOB")
+[[ -n "$UNAME"       ]] && ARGS+=(--user "$UNAME")
+[[ -n "$EMAIL"       ]] && ARGS+=(--email "$EMAIL")
+[[ -n "$NAME"        ]] && ARGS+=(--name "$NAME")
+[[ -n "$WORDLIST"    ]] && ARGS+=(--wordlist "$WORDLIST")
+[[ -n "$RULES"       ]] && ARGS+=(--rules-file "$RULES")
+[[ -n "$HYBRID_MASK" ]] && ARGS+=(--hybrid-mask "$HYBRID_MASK")
+[[ "$BRUTE" == 1     ]] && ARGS+=(--brute)
 for w in "${WORD_LIST[@]}"; do ARGS+=(--word "$w"); done
 [[ ${#EXTRA[@]} -gt 0 ]] && ARGS+=("${EXTRA[@]}")
 
@@ -399,6 +427,7 @@ printf 'hash  == %s ==\n' "$HASH"
 printf 'algo  == %s ==\n' "$ALGO"
 printf 'words == %s ==\n' "$WORDS"
 printf 'dob   == %s ==\n' "$DOB"
+[[ -n "$UNAME$EMAIL$NAME" ]] && printf 'ident == user:%s email:%s name:%s ==\n' "$UNAME" "$EMAIL" "$NAME"
 printf 'args  == %s ==\n' "${ARGS[*]}"
 
 # --- run ------------------------------------------------------------------
@@ -418,6 +447,13 @@ exit $rc
 - **`ARGS` is an array** — `"${ARGS[@]}"` passes each flag as one word. (`make run
   ARGS="…"` can't do this: it splits the string again, so quote-sensitive values like
   `--mask` or a `--word` with spaces break. Call `./crack.py` directly.)
+- **`WORDS` / `DOB` / `UNAME` / `EMAIL` / `NAME`** are the target hints — each is added
+  only when non-empty, so leave the ones you don't know as `""`. `WORDS` splits on
+  spaces into repeated `--word`; the rest map to `--user` / `--email` / `--name` /
+  `--dob` and all feed the same hint-token list.
+- **`WORDLIST` / `RULES` / `HYBRID_MASK`** wire in `--wordlist` (your own list, loaded
+  ahead of the built-ins), `--rules-file` (hashcat ruleset), and `--hybrid-mask` (turns
+  on the hybrid module) — again only when set.
 - **`BUDGET` / `MODULE_BUDGET`** are the size strings from
   [Tune the effort](#tune-the-effort) — a bare number means millions.
 - **`BRUTE=1`** adds `--brute` with default charset (`?d`, length 1–8) as a last-resort
@@ -431,6 +467,21 @@ The per-module table shows how many candidates each attack tried and whether it 
 its budget. To go further: add `--mask` / `--brute`, raise `--module-budget`, feed
 more hints, or drop `--limit`.
 
+In **plaintext mode** a `NOT FOUND` is followed by a **shape analysis** — the tool
+regex-classifies the password you gave against known weak shapes (word + year, leet
+substitution, embedded birthday, keyboard walk, run-together words, short-enough-to-
+brute, …) and names the knob that would most likely reach it, e.g.:
+
+```
+  shape analysis (why the enabled attacks may have missed it):
+    - word + 4-digit year ('hunter' + 1990): --rules-file rules/starter.rule has
+      year-suffix rules; also raise --module-budget if 'hunter' is deep in the wordlist
+    - embedded date '16041983' (DDMMYYYY): pass --dob <date> and --depth 2
+```
+
+It is advisory only and never changes the result or the rank. Hash / zip runs skip it
+(there is no plaintext to inspect).
+
 ---
 
 ## Layout
@@ -439,7 +490,8 @@ more hints, or drop `--limit`.
 crack.py         CLI entry point + argument parsing
 core/            context (shared state, hints, limits), matcher (plaintext/hash/zip),
                  wordlists (loader), runner (budgeted pipeline), rules_engine (hashcat rules),
-                 parallel (--jobs fork pool)
+                 shapes (NOT-FOUND gap diagnosis + CRACKED assessment),
+                 term (muted ANSI colour), parallel (--jobs fork pool)
 modules/         one file per attack; registered in modules/__init__.py
 data/            wordlists (*.txt), committed
 rules/           hashcat-style rule files for --rules-file (starter.rule), committed

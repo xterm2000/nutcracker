@@ -5,6 +5,8 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 
+from core import term
+
 
 @dataclass
 class ModuleStat:
@@ -49,7 +51,7 @@ class Runner:
                 break
             if tried % self.progress_every == 0:
                 rate = tried / (time.time() - m0 + 1e-9)
-                print(f"    [{mod.name}] {tried:,} tried ({rate:,.0f}/s)")
+                print(term.dim(f"    [{mod.name}] {tried:,} tried ({rate:,.0f}/s)"))
         return None, tried
 
     def _run_parallel(self, mod, budget: int, remaining_global: int, m0: float):
@@ -74,14 +76,14 @@ class Runner:
 
         for mod in self.modules:
             if self.ctx.mode == "hash" and getattr(mod, "plaintext_only", False):
-                print(f"  [{mod.name}] skipped (needs plaintext target)")
+                print(term.dim(f"  [{mod.name}] skipped (needs plaintext target)"))
                 continue
 
             note_fn = getattr(mod, "note", None)
             if note_fn:
                 msg = note_fn(self.ctx)
                 if msg:
-                    print(f"  [{mod.name}] {msg}")
+                    print(term.dim(f"  [{mod.name}] {msg}"))
 
             budget = self._budget_for(mod)
             remaining_global = gbudget - total
@@ -92,7 +94,7 @@ class Runner:
                 else:
                     found, mtried = self._run_sequential(mod, budget, remaining_global, m0)
             except Exception as exc:  # a bad module shouldn't kill the run
-                print(f"    [{mod.name}] error: {exc!r}")
+                print(term.warn(f"    [{mod.name}] error: {exc!r}"))
                 found, mtried = None, 0
 
             total += mtried
@@ -103,9 +105,10 @@ class Runner:
             hit = mtried >= budget or total >= gbudget
             stats.append(ModuleStat(mod.name, mtried, time.time() - m0, hit))
             tag = " (budget hit)" if hit and total < gbudget else ""
-            print(f"  [{mod.name}] done: {mtried:,} tried in {time.time() - m0:.1f}s{tag}")
+            print(term.dim(f"  [{mod.name}] done: {mtried:,} tried "
+                           f"in {time.time() - m0:.1f}s{tag}"))
             if total >= gbudget:
-                print("  global budget reached -- stopping.")
+                print(term.dim("  global budget reached -- stopping."))
                 break
 
         return Result(None, None, None, total, time.time() - t0, stats)

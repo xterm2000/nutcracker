@@ -95,6 +95,16 @@ module list → `Runner` iterates each module's `generate(ctx)`, testing every c
   `ZipMatcher`). Each exposes `.mode` + `.matches(candidate) -> bool` and nothing else.
 - **`core/rules_engine.py`** — hashcat-rule parser/applier (`tokenize`, `apply`, `RuleSet`,
   `load`). Used only when `--rules-file` is given; see the `rules` module note below.
+- **`core/shapes.py`** — two analysis helpers, advisory only, never touch the result or rank:
+  `diagnose(target, hint_tokens)` on a **plaintext** `NOT FOUND` regex-classifies the target
+  against weak shapes (word+year, leet, embedded date, keyboard walk, run-together words,
+  brute-feasible, …) and prints which knob would reach it (skipped in hash/zip mode);
+  `verdict(module, rank, target)` on any `CRACKED` returns a strength tier + per-module
+  "what it is" + better-practice tips, printed under the result.
+- **`core/term.py`** — muted 256-colour ANSI helper. `configure(mode)` from `--color`
+  (`auto`/`always`/`never`, auto = tty and not `NO_COLOR`); style shortcuts
+  (`label/ok/warn/bad/accent/dim/head`) return text unchanged when disabled. Imported by
+  `crack.py` and `runner.py`.
 - **`core/runner.py`** — the pipeline. Per-module budget (`limits.module_budget` or a module's
   own `budget` attr) and a global `limits.global_budget` hard stop. A module raising an
   exception is caught and logged, not fatal. Returns a `Result` (found/module/rank + per-module

@@ -2,13 +2,21 @@
 set -euo pipefail
 
 # --- target -----------------------------------------------------------------
-PASSP="mama1604solomakha1983sasha"              # only used to build a self-test hash
+PASSP='p@$$word123'              # only used to build a self-test hash
 ALGO="md5"
 HASH="${HASH:-$(printf '%s' "$PASSP" | md5sum | awk '{print $1}')}"   # or: export HASH=...
 
 # --- what you know about the owner ----------------------------------------
-WORDS="solomakha mama sasha"               # space-separated; each becomes --word X
-DOB="22041983"                             # empty string to disable
+WORDS="word1 word2"   # space-separated; each becomes --word X
+DOB=""                             # empty string to disable
+UNAME=""                                   # --user  : login / handle
+EMAIL=""                                   # --email : full address
+NAME=""                                    # --name  : full name, e.g. "Mary Smith"
+
+# --- extra inputs -------------------------------------------------------------
+WORDLIST=""                                # --wordlist  : extra list, loaded first (rockyou.txt, cewl.txt)
+RULES=""                                   # --rules-file: hashcat-style ruleset (rules/starter.rule)
+HYBRID_MASK=""                             # --hybrid-mask: e.g. '?d?d?d?d' (adds the hybrid module)
 
 # --- effort knobs ---------------------------------------------------------
 BUDGET=150            # global budget, millions
@@ -23,8 +31,14 @@ read -ra WORD_LIST <<< "$WORDS"
 ARGS=(--hash "$HASH" --algo "$ALGO"
       --budget "$BUDGET" --module-budget "$MODULE_BUDGET"
       --depth "$DEPTH" --jobs "$JOBS")
-[[ -n "$DOB"  ]] && ARGS+=(--dob "$DOB")
-[[ "$BRUTE" == 1 ]] && ARGS+=(--brute)
+[[ -n "$DOB"         ]] && ARGS+=(--dob "$DOB")
+[[ -n "$UNAME"       ]] && ARGS+=(--user "$UNAME")
+[[ -n "$EMAIL"       ]] && ARGS+=(--email "$EMAIL")
+[[ -n "$NAME"        ]] && ARGS+=(--name "$NAME")
+[[ -n "$WORDLIST"    ]] && ARGS+=(--wordlist "$WORDLIST")
+[[ -n "$RULES"       ]] && ARGS+=(--rules-file "$RULES")
+[[ -n "$HYBRID_MASK" ]] && ARGS+=(--hybrid-mask "$HYBRID_MASK")
+[[ "$BRUTE" == 1     ]] && ARGS+=(--brute)
 for w in "${WORD_LIST[@]}"; do ARGS+=(--word "$w"); done
 [[ ${#EXTRA[@]} -gt 0 ]] && ARGS+=("${EXTRA[@]}")
 
@@ -34,6 +48,7 @@ printf 'hash  == %s ==\n' "$HASH"
 printf 'algo  == %s ==\n' "$ALGO"
 printf 'words == %s ==\n' "$WORDS"
 printf 'dob   == %s ==\n' "$DOB"
+[[ -n "$UNAME$EMAIL$NAME" ]] && printf 'ident == user:%s email:%s name:%s ==\n' "$UNAME" "$EMAIL" "$NAME"
 printf 'args  == %s ==\n' "${ARGS[*]}"
 
 # --- run ------------------------------------------------------------------
