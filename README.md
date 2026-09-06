@@ -38,8 +38,8 @@ dobwords → wordchain → hybrid → mask`. (`wordchain`'s plaintext decomposit
 early, at rank ~1; its hash-mode generator runs late. `dobwords` only does anything
 with `--dob`; `hybrid` only with `--hybrid-mask`; `mask` only with `--mask`/`--brute`.)
 
-Wordlists live in `data/` (passwords, first names, surnames, TV/film, English
-Wikipedia — ~280k unique words after de-dup).
+Wordlists live in `data/` (passwords, first names, surnames, TV/film, world
+cities, English Wikipedia — ~230k unique words after de-dup).
 
 ---
 
@@ -100,7 +100,7 @@ instead of a digest. ZipCrypto is built in; WinZip AES needs `pip install pyzipp
 #### Cutting redundant work
 
 - `context` already does *token + year/date suffix*. If all you have is hints and a
-  suspected date, `--only context,dates,dobwords` skips the ~200k-word
+  suspected date, `--only context,dates,dobwords` skips the ~230k-word
   `dictionary` / `rules` sweep entirely.
 - `keyboard` and `sequences` overlap on a few repeats (`asdasd`, `qweqwe`); `sequences`
   runs first and wins the rank, so `--skip keyboard` costs little when budget is tight
@@ -393,6 +393,7 @@ for w in "${WORD_LIST[@]}"; do ARGS+=(--word "$w"); done
 [[ ${#EXTRA[@]} -gt 0 ]] && ARGS+=("${EXTRA[@]}")
 
 clear
+printf 'pass  == %s ==\n' "$PASSP"
 printf 'hash  == %s ==\n' "$HASH"
 printf 'algo  == %s ==\n' "$ALGO"
 printf 'words == %s ==\n' "$WORDS"

@@ -19,7 +19,7 @@ the archive uses WinZip AES; ZipCrypto archives need nothing).
 - No test suite, no linter, no CI. Verify changes by running `./crack.py` against a known
   target and checking the reported rank/module.
 - Git repo initialized 2026-09-03; **no commits yet**, branch `master`.
-- `data/*.txt` (~280k lines) are committed inputs — never regenerate them programmatically.
+- `data/*.txt` (~320k lines) are committed inputs — never regenerate them programmatically.
 - Global candidate budgets default high (3M/module, 30M total); an unbounded new generator
   can run for minutes before the budget stops it. Keep generators breadth-first.
 - `--module-budget` / `--budget` take a size string (`_budget_size` in `crack.py`), not a
@@ -81,13 +81,15 @@ module list → `Runner` iterates each module's `generate(ctx)`, testing every c
   preferred; `crack.py` warns if `--dob` won't parse). `Limits` holds all
   the caps. `CURRENT_YEAR` is defined here and imported widely for year-suffix generation.
 - **`core/wordlists.py`** — loads `data/*.txt` in a fixed cheapest-first order (passwords,
-  names, surnames, tv/film, wikipedia) into one deduped `WordlistBundle`. Files are `word` or
+  names, surnames, tv/film, world cities, wikipedia) into one deduped `WordlistBundle`. Files are `word` or
   `word <freq>` per line; only the first token is used. `--limit` caps words *per file*.
   `--wordlist PATH` (repeatable) prepends extra user lists — loaded **before** the built-ins
   so they take priority in `dictionary`/`rules` order (bring your own rockyou / CeWL list).
   The line number within `english_wikipedia.txt` (frequency-sorted) is kept as an
   English-commonness rank — `bundle.is_common(word, cutoff)` — used by `wordchain` to reject
-  splits through rare list cruft.
+  splits through rare list cruft. The popularity-ordered first-name lists
+  (`female_names.txt`, `male_names.txt`, not surnames) are folded into the same rank map
+  (best-of), so short first names (`eve`, `ana`, `kim`) count as real segments.
 - **`core/matcher.py`** — the three matchers above (`PlaintextMatcher`, `HashMatcher`,
   `ZipMatcher`). Each exposes `.mode` + `.matches(candidate) -> bool` and nothing else.
 - **`core/rules_engine.py`** — hashcat-rule parser/applier (`tokenize`, `apply`, `RuleSet`,
@@ -174,7 +176,7 @@ real-world `.rule` files still load. Sample: `rules/starter.rule` (~73 rules).
 
 ## Data
 
-`data/` holds the six plaintext wordlists (~280k lines total), committed to the repo. They are
+`data/` holds the seven plaintext wordlists (~320k lines total), committed to the repo. They are
 inputs, not generated — don't rewrite them programmatically.
 
 `rules/` holds committed hashcat-style rule files (`starter.rule`) for `--rules-file`. Also

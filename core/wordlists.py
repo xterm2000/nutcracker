@@ -12,6 +12,7 @@ WORDLISTS = [
     "male_names.txt",
     "surnames.txt",
     "us_tv_and_film.txt",
+    "world_cities.txt",
     "english_wikipedia.txt",
 ]
 
@@ -20,6 +21,12 @@ WORDLISTS = [
 # is this word in ordinary English" rank, which `wordchain` uses to keep its
 # run-together decomposition from tiling a password out of rare 2-3 char cruft.
 _RANK_LIST = "english_wikipedia.txt"
+
+# first-name lists are popularity-ordered too; fold them into the commonness
+# rank (best-of, so a name that is also a common English word keeps the better
+# rank) -- this lets `wordchain` accept short first names (eve, ana, kim, sam)
+# as real segments instead of "cruft". Surnames are deliberately left out.
+_NAME_RANK_LISTS = ("female_names.txt", "male_names.txt")
 
 
 class WordlistBundle:
@@ -63,8 +70,11 @@ def load(data_dir: str, cap: int | None = None,
                 if not token:
                     continue
                 w = token[0]
-                if name == _RANK_LIST and w.lower() not in wiki_rank:
-                    wiki_rank[w.lower()] = idx
+                if name == _RANK_LIST or name in _NAME_RANK_LISTS:
+                    lw = w.lower()
+                    prev = wiki_rank.get(lw)
+                    if prev is None or idx < prev:
+                        wiki_rank[lw] = idx
                 if w and w not in seen:
                     seen.add(w)
                     words.append(w)
