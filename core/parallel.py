@@ -16,9 +16,6 @@ casing.
 from __future__ import annotations
 
 import multiprocessing as mp
-import time
-
-from core import term
 
 _matcher = None
 _found = None
@@ -50,8 +47,7 @@ class ParallelExecutor:
         self.pool = mp.Pool(jobs, initializer=_init_worker, initargs=(matcher, self.found))
 
     def run_module(self, gen, budget: int, remaining_global: int,
-                    progress_every: int | None = None, mod_name: str = "",
-                    t0: float | None = None) -> tuple[str | None, int]:
+                    progress=None) -> tuple[str | None, int]:
         """Drain gen (a module's candidate generator) through the pool in batches.
 
         Stops at whichever of budget / remaining_global / a match comes
@@ -79,7 +75,6 @@ class ParallelExecutor:
                 yield batch
 
         tried = 0
-        last_print = 0
         found = None
         idx = 0
         for result in self.pool.imap(_test_batch, batches()):
@@ -90,8 +85,6 @@ class ParallelExecutor:
                 break
             tried += lengths[idx]
             idx += 1
-            if progress_every and t0 is not None and tried - last_print >= progress_every:
-                last_print = tried
-                rate = tried / (time.time() - t0 + 1e-9)
-                print(term.dim(f"    [{mod_name}] {tried:,} tried ({rate:,.0f}/s)"))
+            if progress is not None:
+                progress.tick(tried)
         return found, tried

@@ -22,9 +22,11 @@ Examples:
   ./crack.py --hash <h> --algo md5 --brute --charset dl --min 4 --max 6
   ./crack.py -p 'Password2024!' --rules-file rules/starter.rule
   ./crack.py -p 'hunter1990' --hybrid-mask '?d?d?d?d'
+  ./crack.py -p 'passwyrd' --fuzz 1                  # dictionary word, 1 char off
   ./crack.py --hash <h> --algo sha1 --wordlist rockyou.txt --rules-file rules/starter.rule
   ./crack.py -p x --only pins,dates          # run just some modules
   ./crack.py -p x --skip wordchain,rules     # or drop some
+  OLLAMA_MODEL=llama3.2 ./crack.py -p x      # + a local-LLM second opinion (env-gated)
 """
 
 from __future__ import annotations
@@ -38,7 +40,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from core.context import CrackContext, Hints, Limits
 from core.matcher import HashMatcher, PlaintextMatcher, ZipMatcher
-from core import rules_engine, shapes, term, wordlists
+from core import dotenv, estimate, opinion, rules_engine, shapes, term, wordlists
 import modules
 from core.runner import Runner
 
@@ -47,6 +49,15 @@ DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 
 def _csv(s):
     return [x.strip() for x in s.split(",") if x.strip()]
+
+
+def _seps(s):
+    """Parse a --permute-sep list: 'space'/'sp' -> ' ', 'none'/'' -> '', else literal."""
+    out = []
+    for tok in s.split(","):
+        t = tok.strip()
+        out.append(" " if t in ("space", "sp") else "" if t in ("none", "nil", "") else t)
+    return out
 
 
 def _budget_size(s):
@@ -58,6 +69,37 @@ def _budget_size(s):
         mult = {"k": 1_000, "m": 1_000_000, "g": 1_000_000_000}[s[-1]]
         s = s[:-1]
     return int(float(s) * mult)
+
+
+_VERDICT_COLOUR = {
+    "trivial": "bad", "weak": "bad",
+    "moderate": "warn", "fair": "warn",
+    "strong": "ok", "excellent": "ok",
+}
+
+
+def _second_opinion(report_lines: list[str], subject: str) -> None:
+    """Hand the finished report to a local Ollama model (if OLLAMA_MODEL is set)
+    and print its free-text opinion in a bordered panel headed by the target,
+    the model name and a colour-coded verdict. Silent one-liner when disabled;
+    never fatal -- a broken/absent Ollama must not change the exit code."""
+    if not opinion.enabled():
+        return
+    report = "\n".join(report_lines)
+    print(term.dim("\n  asking the local model for a second opinion..."))
+    data, err = opinion.consult(report)
+    if not data:
+        print(term.dim(f"  llm opinion unavailable -- {err}"))
+        return
+    verdict = (data.get("verdict") or "?").strip()
+    colour = _VERDICT_COLOUR.get(verdict.lower(), "accent")
+    sep = f"   {term.dim('|')}   "
+    parts = [subject, data.get("model", "?"), term.style(verdict.upper(), colour)]
+    crack_time = (data.get("crack_time") or "").strip()
+    if crack_time:
+        parts.append(term.style(f"~{crack_time}", colour))
+    print(term.panel(data.get("opinion") or "(no opinion returned)",
+                     title=sep.join(parts), width=76))
 
 
 def build_args():
@@ -106,6 +148,29 @@ def build_args():
                      default="both", help="word+mask, mask+word, or both (default both)")
     hyb.add_argument("--hybrid-vocab", type=int, default=2000,
                      help="top-N words fed to the hybrid module (default 2000)")
+
+    fz = ap.add_argument_group("fuzz (opt-in, adds the fuzz module)")
+    fz.add_argument("--fuzz", type=int, choices=(1, 2), metavar="N",
+                    help="dictionary words with up to N single-char substitutions "
+                         "(Hamming distance <= N); N=2 is much larger, use a small vocab")
+    fz.add_argument("--fuzz-vocab", type=int, default=2000,
+                    help="top-N words fuzzed, plus the hint tokens (default 2000)")
+    fz.add_argument("--fuzz-charset", default="sub", metavar="SPEC",
+                    help="substitution alphabet: 'sub' (a-z0-9!@#$%%, default), "
+                         "'kbd' (keyboard-adjacent keys only), a mask spec (l/d/u/s/a), "
+                         "or a literal string of characters")
+
+    pm = ap.add_argument_group("permute (opt-in, adds the permute module)")
+    pm.add_argument("--permute", action="store_true",
+                    help="try the known --word/--name/--user tokens in every order, "
+                         "glued with each separator (known-words / unknown-order passphrase)")
+    pm.add_argument("--permute-sep", type=_seps, default=None, metavar="LIST",
+                    help="separator list, e.g. 'none,space,-,_,.' (default: none,space,-,_,.)")
+    pm.add_argument("--permute-fill", type=int, choices=(0, 1, 2), default=0,
+                    help="also fill N unknown slots from the top common English words "
+                         "(default 0; >0 is much larger)")
+    pm.add_argument("--permute-vocab", type=int, default=200,
+                    help="top-N common words used for --permute-fill slots (default 200)")
 
     brute = ap.add_argument_group("mask / brute (opt-in, adds the mask module)")
     brute.add_argument("--mask", help="hashcat-style mask, e.g. '?u?l?l?l?d?d?d?d'")
@@ -177,6 +242,8 @@ def resolve_target(args):
 
 
 def main() -> int:
+    # a project .env feeds the optional OLLAMA_* knobs; real env vars still win
+    dotenv.load(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
     args = build_args().parse_args()
     term.configure(args.color)
 
@@ -206,13 +273,11 @@ def main() -> int:
             print(f"  ! cannot read --rules-file: {exc}")
             return 1
 
-    L, D, A = term.label, term.dim, term.accent
+    D = term.dim
 
-    print(f"\n{L('Target :')} {label}")
-    print(D("Loading wordlists..."))
+    print(D("\nLoading wordlists..."))
     bundle = wordlists.load(DATA_DIR, limits.word_cap, extra=args.wordlist)
     extra_note = f" (+{len(args.wordlist)} custom)" if args.wordlist else ""
-    print(D(f"  {len(bundle):,} unique base words from {DATA_DIR}{extra_note}"))
 
     ctx = CrackContext(matcher=matcher, wordlists=bundle, hints=hints,
                        limits=limits, data_dir=DATA_DIR, plaintext_target=plaintext)
@@ -225,53 +290,116 @@ def main() -> int:
         min_len=args.min_len, max_len=args.max_len,
         ruleset=ruleset, hybrid_mask=args.hybrid_mask,
         hybrid_side=args.hybrid_side, hybrid_vocab=args.hybrid_vocab,
+        fuzz=args.fuzz, fuzz_vocab=args.fuzz_vocab, fuzz_charset=args.fuzz_charset,
+        permute=args.permute, permute_seps=args.permute_sep,
+        permute_fill=args.permute_fill, permute_vocab=args.permute_vocab,
     )
-    print(f"{L('Mode   :')} {ctx.mode}")
-    print(f"{L('Modules:')} {D(' -> '.join(m.name for m in mods))}")
+    crows = [
+        ("target", label),
+        ("mode", ctx.mode),
+        ("wordlist", f"{len(bundle):,} unique base words{extra_note}"),
+        ("modules", f"{len(mods)} enabled"),
+    ]
     if ruleset is not None:
-        print(f"{L('Rules  :')} {len(ruleset):,} from {args.rules_file}")
+        crows.append(("rules", f"{len(ruleset):,} from {args.rules_file}"))
     if hints.tokens():
-        print(f"{L('Hints  :')} {', '.join(hints.tokens())}")
+        crows.append(("hints", ", ".join(hints.tokens())))
+    crows.append(("budgets", f"{limits.module_budget:,}/module   "
+                             f"{limits.global_budget:,} total"))
+    crows.append(("jobs", str(args.jobs)))
+    print(term.table(crows, title="RUN", kw=16))
+    print(D("  " + " -> ".join(m.name for m in mods)))
     if args.dob and hints.dob_parts() is None:
         print(term.warn(f"  ! --dob {args.dob!r} not understood (try YYYY-MM-DD or DDMMYYYY) "
                         "-- date-based attacks disabled"))
-    print(f"{L('Budgets:')} {limits.module_budget:,}/module, {limits.global_budget:,} total")
-    print(f"{L('Jobs   :')} {args.jobs}\n")
+    print()
 
     result = Runner(mods, ctx, jobs=args.jobs).run()
 
     print()
-    if result.found is not None:
-        print(f"  {term.ok('CRACKED')}: {result.found!r}")
-        print(D(f"  via module '{result.module}', rank #{result.rank:,}, "
-                f"{result.elapsed:.1f}s total"))
+    algo = getattr(matcher, "algo", None)
+    zip_mode = matcher.__class__.__name__ == "ZipMatcher"
 
-        vline, tips = shapes.verdict(result.module, result.rank or 1,
+    if result.found is not None:
+        # guesses: the cracking module's own local hit position is the fair
+        # single-technique figure. wordchain's plaintext decomposition yields
+        # just one candidate, so ask the module for a real estimate instead.
+        guesses = result.stats[-1].tried if result.stats else (result.rank or 1)
+        gnote = None
+        mod_inst = next((m for m in mods if m.name == result.module), None)
+        est_fn = getattr(mod_inst, "estimate_guesses", None)
+        if est_fn:
+            try:
+                got = est_fn(ctx, result.found)
+            except Exception:
+                got = None
+            if got:
+                guesses, gnote = got
+
+        vline, tips = shapes.verdict(result.module, int(guesses),
                                      result.found, limits.global_budget)
-        colour = term.bad if vline.startswith(("trivial", "very weak")) else term.warn
-        print(f"\n  {L('assessment:')} {colour(vline)}")
+
+        rows = [
+            ("result", "CRACKED"),
+            ("password", repr(result.found)),
+            ("via", f"{result.module}  (rank #{result.rank:,})"),
+            ("guesses", f"{estimate.human_count(guesses)}  ({int(guesses):,})"),
+        ]
+        for _long, short, human in estimate.crack_time(guesses, algo=algo,
+                                                       zip_mode=zip_mode):
+            rows.append((f"vs {short}", human))
+        rows.append(("assessment", vline))
+        rows.append(("elapsed", f"{result.elapsed:.1f}s total"))
+        print(term.table(rows, title="SUMMARY", kw=16))
+
+        if gnote:
+            print(D(f"  guess estimate = {gnote}"))
         print(D("  do better:"))
         for tip in tips:
             print(f"    {D('-')} {tip}")
+
+        _second_opinion([f"{k}: {v}" for k, v in rows]
+                        + [f"tip: {t}" for t in tips],
+                        subject=repr(result.found))
         return 0
 
-    print(f"  {term.warn('NOT FOUND')} after {result.total_tried:,} candidates "
-          f"in {result.elapsed:.1f}s")
-    print(D("  per-module:"))
-    for s in result.stats:
-        tag = term.dim(" (budget hit)") if s.budget_hit else ""
-        print(D(f"    {s.name:<12} {s.tried:>12,}  {s.elapsed:6.1f}s") + tag)
-    print(D("  -> not reachable with the enabled attacks; widen with --mask/--brute,"
-            " raise --module-budget, or add hints."))
+    findings = shapes.diagnose(plaintext, hints.tokens()) if plaintext is not None else []
+    weak_shape = bool(findings) and not any(
+        p in findings[-1] for p in ("strong password", "no known weak shape"))
 
-    if plaintext is not None:
-        findings = shapes.diagnose(plaintext, hints.tokens())
-        if findings:
-            print(f"\n  {L('shape analysis')} "
-                  + D("(why the enabled attacks may have missed it):"))
-            for f in findings:
-                print(f"    {D('-')} {f}")
-    return 2
+    nrows = [
+        ("result", "NOT FOUND"),
+        ("mode", ctx.mode),
+        ("tried", f"{result.total_tried:,} candidates"),
+        ("elapsed", f"{result.elapsed:.1f}s"),
+    ]
+    print(term.table(nrows, title="SUMMARY", kw=16))
+
+    mrows = [(s.name, f"{s.tried:>13,}   {s.elapsed:6.1f}s"
+              + ("   budget hit" if s.budget_hit else ""))
+             for s in result.stats]
+    if mrows:
+        print(term.table(mrows, title="per-module", kw=16))
+
+    if findings:
+        print(D("  shape analysis (why the enabled attacks may have missed it):"))
+        for f in findings:
+            print(f"    {D('-')} {f}")
+
+    est_lines = estimate.not_found_report(plaintext, result.total_tried, algo=algo,
+                                          zip_mode=zip_mode, weak_shape=weak_shape)
+    print(D("  strength estimate (rough -- a NOT FOUND is a floor, not proof):"))
+    for line in est_lines:
+        print(f"    {D('-')} {line}")
+    print(D("  -> widen with --mask / --brute, raise --module-budget, or add hints."))
+
+    subject = repr(plaintext) if plaintext is not None else f"{algo or 'hash'} target"
+    _second_opinion([f"{k}: {v}" for k, v in nrows]
+                    + [f"shape: {f}" for f in findings]
+                    + [f"estimate: {ln}" for ln in est_lines]
+                    + (["target plaintext: " + repr(plaintext)] if plaintext else []),
+                    subject=subject)
+    return 3  # distinct from 1 (real error) and argparse's 2 (usage error)
 
 
 if __name__ == "__main__":

@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import itertools
 
+from core import estimate
+
 CHARSETS = {
     "d": "0123456789",
     "l": "abcdefghijklmnopqrstuvwxyz",
@@ -75,7 +77,8 @@ class MaskModule:
     def note(self, ctx):
         if not (self.mask or self.brute):
             return None
-        return f"keyspace ~= {self.keyspace():,} candidates"
+        return (f"keyspace ~= {self.keyspace():,} candidates -- "
+                f"{estimate.exhaust_note(self.keyspace(), ctx)}")
 
     def generate(self, ctx):
         for plan in self._plans():

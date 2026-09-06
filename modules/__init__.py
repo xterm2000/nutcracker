@@ -15,9 +15,11 @@ from modules.context_based import ContextModule
 from modules.dates import DateModule
 from modules.dictionary import DictionaryModule
 from modules.dobwords import DobWordsModule
+from modules.fuzz import FuzzModule
 from modules.hybrid import HybridModule
 from modules.keyboard import KeyboardModule
 from modules.mask import MaskModule
+from modules.permute import PermuteModule
 from modules.phone import PhoneModule
 from modules.pins import PinModule
 from modules.rules import RulesModule
@@ -32,7 +34,9 @@ ALWAYS = [
 
 def build(only=None, skip=None, *, mode="plaintext", chain_words=3, chain_vocab=800,
           dob_depth=1, mask=None, brute=False, charset="d", min_len=1, max_len=8,
-          ruleset=None, hybrid_mask=None, hybrid_side="both", hybrid_vocab=2000):
+          ruleset=None, hybrid_mask=None, hybrid_side="both", hybrid_vocab=2000,
+          fuzz=None, fuzz_vocab=2000, fuzz_charset="sub",
+          permute=False, permute_seps=None, permute_fill=0, permute_vocab=200):
     insts = [cls() for cls in ALWAYS]
 
     if ruleset is not None:
@@ -44,6 +48,13 @@ def build(only=None, skip=None, *, mode="plaintext", chain_words=3, chain_vocab=
 
     if hybrid_mask:
         insts.append(HybridModule(mask=hybrid_mask, side=hybrid_side, vocab=hybrid_vocab))
+
+    if fuzz:
+        insts.append(FuzzModule(n=fuzz, vocab=fuzz_vocab, charset=fuzz_charset))
+
+    if permute:
+        insts.append(PermuteModule(seps=permute_seps, fill=permute_fill,
+                                   vocab=permute_vocab))
 
     wc = WordChainModule(chain_words=chain_words, vocab=chain_vocab)
     if mode == "hash":
@@ -67,4 +78,5 @@ def build(only=None, skip=None, *, mode="plaintext", chain_words=3, chain_vocab=
 
 
 def names():
-    return [cls().name for cls in ALWAYS] + ["wordchain", "dobwords", "hybrid", "mask"]
+    return [cls().name for cls in ALWAYS] + [
+        "wordchain", "dobwords", "hybrid", "fuzz", "permute", "mask"]

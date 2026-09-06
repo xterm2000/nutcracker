@@ -33,9 +33,11 @@ _NAME_RANK_LISTS = ("female_names.txt", "male_names.txt")
 class WordlistBundle:
     """A de-duplicated, best-order-first list of base words."""
 
-    def __init__(self, words: list[str], wiki_rank: dict[str, int] | None = None):
+    def __init__(self, words: list[str], wiki_rank: dict[str, int] | None = None,
+                 english_rank: dict[str, int] | None = None):
         self.words = words
-        self.wiki_rank = wiki_rank or {}
+        self.wiki_rank = wiki_rank or {}       # merged (English freq + name lists)
+        self.english_rank = english_rank or {}  # english_wikipedia.txt only
 
     def __iter__(self):
         return iter(self.words)
@@ -45,6 +47,30 @@ class WordlistBundle:
 
     def top(self, n: int) -> list[str]:
         return self.words[:n]
+
+    def common_words(self, n: int) -> list[str]:
+        """The `n` most frequent *ordinary English* words, in frequency order.
+
+        `top()` returns load-order position, which front-loads breach passwords
+        and names -- useless for building passphrases. This ranks purely by
+        english_wikipedia.txt frequency (`english_rank`, name lists excluded),
+        so 'the', 'is', 'my', 'gun' come first. Cached per instance."""
+        if not self.english_rank:
+            return self.words[:n]
+        if getattr(self, "_by_freq", None) is None:
+            self._by_freq = [w for w, _ in
+                             sorted(self.english_rank.items(), key=lambda kv: kv[1])]
+        return self._by_freq[:n]
+
+    def position(self, word: str) -> int | None:
+        """1-based load-order position of `word` (cheapest lists first), or None
+        if it is in no list. Case-insensitive, first occurrence wins. Cached --
+        used to estimate how many guesses a wordlist attack spends before it."""
+        if getattr(self, "_pos", None) is None:
+            self._pos: dict[str, int] = {}
+            for i, w in enumerate(self.words):
+                self._pos.setdefault(w.lower(), i + 1)
+        return self._pos.get(word.lower())
 
     def is_common(self, word: str, cutoff: int = 25_000) -> bool:
         """True if `word` is within the top `cutoff` of the English frequency
@@ -57,6 +83,7 @@ def load(data_dir: str, cap: int | None = None,
     seen: set[str] = set()
     words: list[str] = []
     wiki_rank: dict[str, int] = {}
+    english_rank: dict[str, int] = {}
     # user-supplied lists load first so they take priority in dictionary/rules order
     paths = list(extra or []) + [os.path.join(data_dir, n) for n in WORDLISTS]
     for path in paths:
@@ -76,10 +103,12 @@ def load(data_dir: str, cap: int | None = None,
                     prev = wiki_rank.get(lw)
                     if prev is None or idx < prev:
                         wiki_rank[lw] = idx
+                    if name == _RANK_LIST and lw not in english_rank:
+                        english_rank[lw] = idx
                 if w and w not in seen:
                     seen.add(w)
                     words.append(w)
                     count += 1
                     if cap and count >= cap:
                         break
-    return WordlistBundle(words, wiki_rank)
+    return WordlistBundle(words, wiki_rank, english_rank)

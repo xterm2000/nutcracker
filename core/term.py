@@ -76,4 +76,75 @@ def dim(t: str) -> str:
     return style(t, "dim")
 
 
+_RESET_RE = None
+
+
+def _visible_len(s: str) -> int:
+    global _RESET_RE
+    if _RESET_RE is None:
+        import re
+        _RESET_RE = re.compile(r"\033\[[0-9;]*m")
+    return len(_RESET_RE.sub("", s))
+
+
+def table(rows, *, title: str | None = None, kw: int | None = None,
+          vw: int = 56, style_name: str = "dim") -> str:
+    """A plain-ASCII box table from (key, value) pairs. Values wider than `vw`
+    are truncated with a '~'. Colour is applied per whole line (alignment-safe);
+    cell text should be plain."""
+    rows = [(str(k), str(v)) for k, v in rows]
+    kw = kw or max((len(k) for k, _ in rows), default=4)
+
+    def _fit(s: str, w: int) -> str:
+        n = _visible_len(s)
+        if n > w:
+            return s[:w - 1] + "~"
+        return s + " " * (w - n)
+
+    span = kw + vw + 3          # inner width of a merged (title) row
+    bar = "+" + "-" * (kw + 2) + "+" + "-" * (vw + 2) + "+"
+    out: list[str] = []
+    if title:
+        out.append("+" + "-" * (span + 2) + "+")
+        out.append("| " + _fit(title, span) + " |")
+    out.append(bar)
+    for k, v in rows:
+        out.append(f"| {_fit(k, kw)} | {_fit(v, vw)} |")
+    out.append(bar)
+    body = "\n".join(out)
+    return style(body, style_name) if _enabled else body
+
+
+def panel(body: str, *, title: str | None = None, width: int = 72,
+          style_name: str = "dim") -> str:
+    """A bordered box holding free-flowing text (word-wrapped to `width`), with
+    an optional header row. `title` may carry its own ANSI codes (e.g. a
+    coloured verdict) -- it is measured by visible width and left un-restyled."""
+    import textwrap
+
+    def _bar() -> str:
+        return "+" + "-" * (width + 2) + "+"
+
+    def _row(s: str) -> str:
+        return "| " + s + " " * max(0, width - _visible_len(s)) + " |"
+
+    out = [_bar()]
+    if title:
+        out.append(_row(title))
+        out.append(_bar())
+    for para in body.strip().split("\n"):
+        if not para.strip():
+            out.append(_row(""))
+            continue
+        for line in textwrap.wrap(para.strip(), width) or [""]:
+            out.append(_row(line))
+    out.append(_bar())
+
+    if not _enabled:
+        return "\n".join(out)
+    title_idx = 1 if title else -1
+    return "\n".join(ln if i == title_idx else style(ln, style_name)
+                     for i, ln in enumerate(out))
+
+
 configure()

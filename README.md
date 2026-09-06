@@ -33,10 +33,11 @@ word×mask hybrids, masks/brute force, etc.
 ```
 
 Run order (cheapest / highest-value first, budget-eaters last):
-`context → pins → phone → sequences → keyboard → dictionary → dates → rules →
-dobwords → wordchain → hybrid → mask`. (`wordchain`'s plaintext decomposition runs
-early, at rank ~1; its hash-mode generator runs late. `dobwords` only does anything
-with `--dob`; `hybrid` only with `--hybrid-mask`; `mask` only with `--mask`/`--brute`.)
+`context → pins → phone → sequences → keyboard → dictionary → permute → dates →
+rules → fuzz → dobwords → wordchain → hybrid → mask`. (`wordchain`'s plaintext
+decomposition runs early, at rank ~1; its hash-mode generator runs late. `dobwords`
+only does anything with `--dob`; `permute` only with `--permute`; `fuzz` only with
+`--fuzz`; `hybrid` only with `--hybrid-mask`; `mask` only with `--mask`/`--brute`.)
 
 Wordlists live in `data/` (passwords, first names, international given names,
 surnames, TV/film, world cities, English Wikipedia — ~240k unique words after
@@ -94,7 +95,9 @@ instead of a digest. ZipCrypto is built in; WinZip AES needs `pip install pyzipp
 | `dates` | bare years, `DDMMYYYY`, `Summer2024`, month names | no date component expected |
 | `rules` | word + case / leet / digits / years — the common human pattern | — (supply `--rules-file` to swap the rule set) |
 | `wordchain` | passphrases, run-together words | a strong random string (it refuses correctly anyway) |
+| `permute` | you know most of a passphrase's words but not their order (or are missing one or two) | fewer than 2 `--word`/hint tokens (inert) |
 | `dobwords` | `--dob` known **and** you suspect name+birthday | no `--dob` (inert) |
+| `fuzz` | a word with one odd internal char swap (`passwyrd`, `monkez`) that `rules`/leet miss | `--fuzz` not given (inert); the tail is a suffix (use `hybrid`) |
 | `hybrid` | word + fixed-width mask, either side | the mask would be wide (`?a?a?a?a` = millions per word) |
 | `mask` | a known exact shape | the shape is unknown — use `rules`/`hybrid` |
 
@@ -121,22 +124,76 @@ instead of a digest. ZipCrypto is built in; WinZip AES needs `pip install pyzipp
 ./crack.py -p 'Summer2024!'
 ```
 
-Reports something like `CRACKED: 'Summer2024!' via module 'rules', rank #1,234,567`.
-A low rank means the password is weak; "NOT FOUND" means none of the enabled attacks
-reached it within budget.
-
-A `CRACKED` result is followed by an **assessment** — a strength tier, what the
-password essentially *is* (the module that found it), and a few pointed
-better-practice tips:
+A run prints a **`RUN`** table (target, mode, wordlist size, module count, hints,
+budgets), then per-module progress, then a **`SUMMARY`** table. On `CRACKED` the
+summary carries the guess count, the time to crack at each attack rate, the
+strength assessment and the elapsed time; a few pointed better-practice tips
+follow it:
 
 ```
-  assessment: weak -- a dictionary word with predictable mangling (case, digits, punctuation, leet)
++-----------------------------------------------------------------------------+
+| SUMMARY                                                                     |
++------------------+----------------------------------------------------------+
+| result           | CRACKED                                                  |
+| password         | 'hey jimmy barbecue 123123@##'                           |
+| via              | wordchain  (rank #53,489)                                |
+| guesses          | ~101.5 trillion  (101,491,825,756,596)                   |
+| vs online 10/s   | ~321,608 years                                           |
+| vs online 1k/s   | ~3,216 years                                             |
+| vs bcrypt-class  | ~161 years                                               |
+| vs fast-hash rig | 17 minutes                                               |
+| assessment       | weak -- several common words run together                |
+| elapsed          | 0.1s total                                               |
++------------------+----------------------------------------------------------+
+  guess estimate = hey~74,197 x jimmy~682 x barbecue~30,389 x 123123~11 x 6 separators
   do better:
-    - only 11 characters -- too short whatever the composition; aim for 16+
-    - Capitalise + digits + trailing symbol is the single most common pattern
+    - concatenation only helps if the words are individually rare -- use more words, chosen at random
     - prefer length over complexity: 4-5 unrelated random words, or a password manager
     - never reuse it
 ```
+
+The guess count is the cracking module's own hit position — for `wordchain`'s
+plaintext decomposition (which only ever emits one candidate) it is estimated as
+the product of each word's depth in the wordlist × separator choices. The time
+rows are order-of-magnitude (hashcat-benchmark rates for a single ~8-GPU rig);
+in hash mode a row for the target's actual algorithm is added. The same
+"N to exhaust vs `<algo>`" figure is appended to the `mask` / `hybrid` / `fuzz` /
+`permute` keyspace lines so you can size `--module-budget` against real effort.
+
+### Second opinion from a local model (opt-in)
+
+Set `OLLAMA_MODEL` and the run ends by handing its report to a local
+[Ollama](https://ollama.com) model and printing the reply as a bordered panel —
+headed by the target, the model name, a colour-coded one-word verdict and the
+model's own offline crack-time estimate, with its free-text reasoning wrapped
+below (the report it sees includes the tool's own crack-time ladder, and the
+model is asked to say whether those figures look right):
+
+```bash
+OLLAMA_MODEL=llama3.2 ./crack.py -p 'Summer2024!'
+```
+
+```
++------------------------------------------------------------------------------+
+| 'Summer2024!'   |   llama3.2   |   WEAK   |   ~seconds on a GPU               |
++------------------------------------------------------------------------------+
+| I agree with the tool and its timing: this is a common word plus a year and  |
+| a symbol, the single most common real-world pattern, so any wordlist-plus-   |
+| rules attack reaches it early. Offline against an unsalted fast hash it       |
+| falls in seconds; even an online-throttled attack gets there in days. The    |
+| change that helps most is a 4-5 word random passphrase from a manager.       |
++------------------------------------------------------------------------------+
+```
+
+Pure stdlib (`urllib` against Ollama's HTTP API — no `ollama` package). Env knobs
+(also read from a gitignored `.env`, real env wins): `OLLAMA_URL` (full endpoint,
+wins if set) or `OLLAMA_HOST` (bare host/IP fine, default `localhost:11434`),
+`OLLAMA_TEMPERATURE` (0.2), `OLLAMA_TIMEOUT` (60s), `OLLAMA_NUM_CTX`. The model is
+asked for JSON with three keys — `verdict`, `crack_time` and `opinion` — and a missing model,
+unreachable server, timeout or unparseable reply prints one dim line and **never
+changes the exit code**. Note: in `-p` mode the report includes the password, so
+it is sent to whatever `OLLAMA_URL` / `OLLAMA_HOST` points at (nothing leaves the
+machine on the localhost default).
 
 ### Audit without leaking the password into your shell history
 
@@ -161,7 +218,11 @@ one short trailing number; a bounded number of parts) so that a strong password 
 "cracked" by tiling it out of obscure two-letter list entries. If it passes, the
 decomposition prints and the audit confirms it at rank ~1. In hash mode the same module
 instead *generates* k-word chains (`--chain-words`, default 3) from the top `--chain-vocab`
-words.
+words **ordered by English frequency** (`the`, `is`, `my`, `gun` — not the breach-password
+order the other modules use). This reaches a 2-word — and, with a raised budget, a short
+3-word — passphrase of ordinary words; a longer passphrase stays uncrackable (that's the
+point of one). For a *known* phrase (a movie quote, a lyric) use `--wordlist` with a
+phrase list instead.
 
 ### Use what you know about the target (hints)
 
@@ -311,6 +372,63 @@ Keyspace = vocab × mask × sides, printed up front — keep the mask small.
 ./crack.py --hash <hex> --algo md5 --hybrid-mask '?d?d?d?d' --hybrid-vocab 5000
 ```
 
+### Fuzz attack (Hamming-distance variants)
+
+`--fuzz N` (N = 1 or 2) adds the `fuzz` module: every one of the top
+`--fuzz-vocab` words (default 2000) **plus the hint tokens**, with up to `N`
+single-character substitutions (same length — Hamming distance ≤ N). This is the
+one thing `rules`/leet don't cover: an arbitrary one-off swap (`passwyrd`,
+`monkez`, `drygon`) or a fat-finger typo baked in (`passworf`). Variants that are
+themselves dictionary words are skipped (`dictionary` already tried them).
+
+Keyspace is `vocab × L × (A−1)` for N=1 and explodes for N=2, so it is always
+vocab-capped and the substitution alphabet is small, not full ASCII:
+
+| `--fuzz-charset` | alphabet | ~per word (L=7) | models |
+|---|---|--:|---|
+| `sub` (default) | `a–z 0–9 ! @ # $ %` | ~270 | a deliberate "made it stronger" swap |
+| `kbd` | keyboard-adjacent keys only | ~40 | an accidental fat-finger typo |
+| `l` / `d` / `u` / `s` / `a` | `mask` charset spec | varies | — |
+| *(literal)* | the exact characters you pass | varies | — |
+
+```bash
+./crack.py -p 'passwyrd' --fuzz 1                        # ~0.5M candidates
+./crack.py -p 'passworf' --fuzz 1 --fuzz-charset kbd     # typo model, ~70k
+./crack.py --hash <hex> --algo md5 --word acme --fuzz 1  # also fuzzes 'acme'
+./crack.py -p 'p&sswl0rd' --fuzz 2 --fuzz-vocab 300      # N=2 needs a tiny vocab
+```
+
+N=2 raises the module budget to 25M and still needs `--fuzz-vocab` in the low
+hundreds — `C(L,2)·(A−1)²` is ~27k candidates per word.
+
+### Permute attack (known words, unknown order)
+
+`--permute` adds the `permute` module: it takes the words you supply as hints
+(`--word`, plus tokens from `--name`/`--user`/`--email`) and tries them in
+**every order**, glued with each separator, in plain and Capitalised forms. This
+is the "I remember the words in my passphrase but not the order" case —
+`context` only ever glues *pairs*, and the hash-mode word-chain generator draws
+from a frequency list, not from your hints.
+
+```bash
+./crack.py --hash <hex> --algo md5 \
+  --word correct --word horse --word battery --word staple --permute
+# 'correct horse battery staple', 'staple-battery-horse-correct', ...  (4! x 5 seps)
+
+# missing a word or two? --permute-fill N pulls N slots from the top common words:
+./crack.py --hash <hex> --algo md5 \
+  --word this --word my --word rifle --word gun --permute --permute-fill 1
+# -> 'this is my rifle gun', 'this my rifle gun today', ...
+```
+
+Keyspace = `perm(tokens + fill) × separators × cases × vocab^fill`, printed up
+front. Tokens are capped at 8 (`8! = 40,320`). `--permute-sep` overrides the
+separator list (`none,space,-,_,.` by default); `--permute-fill` (0–2, default 0)
+and `--permute-vocab` (default 200) control the gap-filling — `fill ≥ 1` raises
+the module budget to 25M. An 8-word passphrase with 6 known words and 2 gaps is
+`perm(8) × vocab²` ≈ tractable only with a small `--permute-vocab` and a raised
+`--budget`; more than 2 unknown words stays out of reach (as it should).
+
 ### Mask attack (known password shape)
 
 Only runs when `--mask` or `--brute` is given; the keyspace is printed up front.
@@ -362,9 +480,16 @@ explicitly (`500k` = 500,000, `1g` = 1,000,000,000).
 | `--hybrid-mask MASK` | adds the hybrid module: top words × this mask | — |
 | `--hybrid-side` | `append` / `prepend` / `both` | `both` |
 | `--hybrid-vocab N` | top-N words for the hybrid module | 2000 |
+| `--fuzz N` | adds the fuzz module: words with ≤ N char substitutions (N ∈ {1,2}) | — |
+| `--fuzz-vocab N` | top-N words fuzzed, plus hint tokens | 2000 |
+| `--fuzz-charset SPEC` | substitution alphabet: `sub` / `kbd` / mask spec / literal | `sub` |
+| `--permute` | adds the permute module: hint tokens in every order × separators | — |
+| `--permute-sep LIST` | separator list, e.g. `none,space,-,_,.` | `none,space,-,_,.` |
+| `--permute-fill N` | also fill N unknown slots from the top common words (N ∈ {0,1,2}) | `0` |
+| `--permute-vocab N` | top-N common words used for `--permute-fill` slots | 200 |
 | `--module-budget SIZE` | max candidates per module (bare=millions, or k/m/g) | `3` (3M) |
 | `--budget SIZE` | global candidate hard stop (bare=millions, or k/m/g) | `30` (30M) |
-| `--chain-vocab N` | top-N words fed to the hash-mode word-chain generator | 800 |
+| `--chain-vocab N` | top-N words (by English frequency) fed to the hash-mode word-chain generator | 800 |
 | `--chain-words N` | max words per chain in hash mode (plaintext is unbounded) | 3 |
 | `--pin6` | also sweep the full 6-digit PIN space (10⁶) | off |
 | `--color` | `auto` / `always` / `never` (auto = on for a terminal; honours `NO_COLOR`) | `auto` |
@@ -372,99 +497,52 @@ explicitly (`500k` = 500,000, `1g` = 1,000,000,000).
 ### Wrap a run in a script
 
 When you're iterating on one target with different hints and budgets, drive it from a
-small shell wrapper instead of retyping flags. Build the arguments into a bash **array**
-(not a string) so nothing is re-split or glob-expanded, and don't let a `NOT FOUND` exit
-code (`2`) abort the script.
+small shell wrapper instead of retyping flags. **`test.sh` in the repo is exactly this** —
+every `crack.py` flag exposed as a `${VAR:-default}` you can override on the command line,
+each appended to a bash **array** (not a string) so quote-sensitive values (`--name`,
+`--mask`, a `--word` with spaces) survive, and a `|| rc=$?` so a `NOT FOUND` exit (`3`)
+doesn't abort the script:
 
 ```bash
-#!/usr/bin/env bash
-set -euo pipefail
-
-# --- target -----------------------------------------------------------------
-PASSP="jimmybbq"                           # only used to build a self-test hash
-ALGO="md5"
-HASH="${HASH:-$(printf '%s' "$PASSP" | md5sum | awk '{print $1}')}"   # or: export HASH=...
-
-# --- what you know about the owner ----------------------------------------
-WORDS="Barbeque bbq"                        # space-separated; each becomes --word X
-DOB=""                                     # empty string to disable
-UNAME=""                                   # --user  : login / handle
-EMAIL=""                                   # --email : full address
-NAME="Jimmy Barbeque"                       # --name  : full name, e.g. "Mary Smith"
-
-# --- extra inputs -----------------------------------------------------------
-WORDLIST=""                                # --wordlist   : extra list, loaded first (rockyou.txt, cewl.txt)
-RULES=""                                   # --rules-file : hashcat-style ruleset (rules/starter.rule)
-HYBRID_MASK=""                             # --hybrid-mask: e.g. '?d?d?d?d' (adds the hybrid module)
-
-# --- effort knobs ---------------------------------------------------------
-BUDGET=150            # global budget, millions
-MODULE_BUDGET=10      # per-module budget, millions
-DEPTH=3               # dobwords structure depth
-JOBS=1
-BRUTE=1              # 1 = append the digit brute sweep (?d x1-8), 0 = skip
-EXTRA=()             # ad-hoc flags, e.g. EXTRA=(--only dobwords --rules-file rules/starter.rule)
-
-# --- assemble -------------------------------------------------------------
-read -ra WORD_LIST <<< "$WORDS"
-ARGS=(--hash "$HASH" --algo "$ALGO"
-      --budget "$BUDGET" --module-budget "$MODULE_BUDGET"
-      --depth "$DEPTH" --jobs "$JOBS")
-[[ -n "$DOB"         ]] && ARGS+=(--dob "$DOB")
-[[ -n "$UNAME"       ]] && ARGS+=(--user "$UNAME")
-[[ -n "$EMAIL"       ]] && ARGS+=(--email "$EMAIL")
-[[ -n "$NAME"        ]] && ARGS+=(--name "$NAME")
-[[ -n "$WORDLIST"    ]] && ARGS+=(--wordlist "$WORDLIST")
-[[ -n "$RULES"       ]] && ARGS+=(--rules-file "$RULES")
-[[ -n "$HYBRID_MASK" ]] && ARGS+=(--hybrid-mask "$HYBRID_MASK")
-[[ "$BRUTE" == 1     ]] && ARGS+=(--brute)
-for w in "${WORD_LIST[@]}"; do ARGS+=(--word "$w"); done
-[[ ${#EXTRA[@]} -gt 0 ]] && ARGS+=("${EXTRA[@]}")
-
-clear
-printf 'pass  == %s ==\n' "$PASSP"
-printf 'hash  == %s ==\n' "$HASH"
-printf 'algo  == %s ==\n' "$ALGO"
-printf 'words == %s ==\n' "$WORDS"
-printf 'dob   == %s ==\n' "$DOB"
-[[ -n "$UNAME$EMAIL$NAME" ]] && printf 'ident == user:%s email:%s name:%s ==\n' "$UNAME" "$EMAIL" "$NAME"
-printf 'args  == %s ==\n' "${ARGS[*]}"
-
-# --- run ------------------------------------------------------------------
-rc=0
-time ./crack.py "${ARGS[@]}" || rc=$?
-case $rc in
-  0) echo ">>> CRACKED" ;;
-  2) echo ">>> not found in budget - raise BUDGET/MODULE_BUDGET, or EXTRA=(--mask '<shape>')" ;;
-  *) echo ">>> crack.py exited $rc" ;;
-esac
-exit $rc
+PASSP='s3cr3t' ./test.sh                       # self-test: md5(PASSP), then crack it
+HASH=<hex> ALGO=sha1 ./test.sh                 # crack a real digest
+HASH=0 PASSP='mary had a lamb' ./test.sh       # plaintext guessability audit (-p)
+ZIP=secret.zip WORDS='acme 1990' JOBS=4 ./test.sh
+PASSP='Password2024!' FUZZ=1 PERMUTE=1 BUDGET=300 ./test.sh
 ```
 
-- **`HASH`** falls back to hashing `PASSP` so the script is self-testing; `export HASH=…`
-  (and set `PASSP=` / `ALGO=`) to point it at a real target. Swap `--hash` for `--zip
-  archive.zip` or `-p "$PASSP"` to change mode.
-- **`ARGS` is an array** — `"${ARGS[@]}"` passes each flag as one word. (`make run
-  ARGS="…"` can't do this: it splits the string again, so quote-sensitive values like
-  `--mask` or a `--word` with spaces break. Call `./crack.py` directly.)
-- **`WORDS` / `DOB` / `UNAME` / `EMAIL` / `NAME`** are the target hints — each is added
-  only when non-empty, so leave the ones you don't know as `""`. `WORDS` splits on
-  spaces into repeated `--word`; the rest map to `--user` / `--email` / `--name` /
-  `--dob` and all feed the same hint-token list.
-- **`WORDLIST` / `RULES` / `HYBRID_MASK`** wire in `--wordlist` (your own list, loaded
-  ahead of the built-ins), `--rules-file` (hashcat ruleset), and `--hybrid-mask` (turns
-  on the hybrid module) — again only when set.
-- **`BUDGET` / `MODULE_BUDGET`** are the size strings from
-  [Tune the effort](#tune-the-effort) — a bare number means millions.
-- **`BRUTE=1`** adds `--brute` with default charset (`?d`, length 1–8) as a last-resort
-  module; set `0` for a quick pass, or put a shaped `--mask` in `EXTRA` instead.
-- **`EXTRA=(...)`** is the extension point for `--only` / `--skip`, `--rules-file`,
-  `--wordlist`, `--hybrid-mask`, `--mask`, `--pin6`, …
+Assembly pattern (abbreviated — see `test.sh` for the full set):
+
+```bash
+read -ra WORD_LIST <<< "$WORDS"
+if   [[ -n "$ZIP" ]];      then ARGS=(--zip "$ZIP")
+elif [[ "$HASH" == 0 ]];   then ARGS=(-p "$PASSP")           # empty PASSP -> crack.py prompts
+else                            ARGS=(--hash "$HASH" --algo "$ALGO")
+fi
+ARGS+=(--budget "$BUDGET" --module-budget "$MODULE_BUDGET" --depth "$DEPTH" --jobs "$JOBS")
+[[ -n "$NAME"  ]] && ARGS+=(--name "$NAME")                  # ... one guard per flag ...
+[[ -n "$FUZZ"  ]] && ARGS+=(--fuzz "$FUZZ")
+[[ -n "$PERMUTE" ]] && ARGS+=(--permute)
+for w in "${WORD_LIST[@]}"; do ARGS+=(--word "$w"); done
+rc=0; time ./crack.py "${ARGS[@]}" || rc=$?
+```
+
+- **Target mode** is `HASH`: unset ⇒ self-test on `md5(PASSP)` (or `${ALGO}sum` if that
+  coreutils tool exists); `<hex>` ⇒ crack that digest; **`0` ⇒ plaintext audit** via `-p`
+  (empty `PASSP` ⇒ `crack.py` prompts, `SHOW=1` ⇒ visible). `HASHFILE` and `ZIP` override
+  the target entirely. `LIST_MODULES=1` just prints the module list and exits.
+- **Every knob is added only when non-empty**, so the crack.py default applies when you
+  leave one blank. `WORDS` and `WORDLIST` split on spaces into repeated `--word` /
+  `--wordlist`; everything else maps 1:1.
+- **`make run ARGS="…"` can't replace this** — it re-splits the string, breaking quoted
+  values. Call `./crack.py` (or `./test.sh`) directly.
+- **`EXTRA=(...)`** stays as the escape hatch for anything not yet wired to a variable.
 
 ### Interpreting "NOT FOUND"
 
-The per-module table shows how many candidates each attack tried and whether it hit
-its budget. To go further: add `--mask` / `--brute`, raise `--module-budget`, feed
+The `SUMMARY` table gives the outcome, total candidates tried and elapsed time; the
+`per-module` table below it shows how many candidates each attack tried and whether it
+hit its budget. To go further: add `--mask` / `--brute`, raise `--module-budget`, feed
 more hints, or drop `--limit`.
 
 In **plaintext mode** a `NOT FOUND` is followed by a **shape analysis** — the tool
@@ -481,6 +559,23 @@ brute, …) and names the knob that would most likely reach it, e.g.:
 
 It is advisory only and never changes the result or the rank. Hash / zip runs skip it
 (there is no plaintext to inspect).
+
+A `NOT FOUND` also prints a **rough strength estimate** — a floor, not a proof:
+
+```
+  strength estimate (rough -- a NOT FOUND is a floor, not proof):
+    - lower bound: it survived 3,787,976 candidates -- ~3 minutes against a slow hash
+      (bcrypt), instantly against a fast-hash rig
+    - upper bound (only if truly random): 16 chars over a ~95-char pool ~= ~4e31 guesses
+      -> longer than the universe has existed even against a fast-hash rig
+    - no weak shape matched -- if the ceiling holds this is a strong password
+```
+
+The **lower bound** (both modes) is just "it survived N guesses". The **upper bound**
+(plaintext only) is the brute-force ceiling from the string's own composition
+(pool-size ^ length) — the real value only if the password has no structure; when the
+shape analysis flagged a pattern the line says so and marks it "reachable, not strong".
+Hash mode gets the floor only: a digest reveals nothing about structure.
 
 ---
 

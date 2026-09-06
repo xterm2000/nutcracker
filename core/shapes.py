@@ -73,6 +73,13 @@ _MODULE_WHY = {
                    "use more words, chosen at random"),
     "hybrid":     ("a word plus a short digit / character tail",
                    "word + 4 digits is a named attack mode (hashcat -a 6); the tail adds ~10^4"),
+    "fuzz":       ("a dictionary word with one or two characters swapped",
+                   "changing a letter or two doesn't help -- crackers fuzz every "
+                   "wordlist entry; the base word is still the weak part"),
+    "permute":    ("a handful of known words in some order",
+                   "if the words are guessable (your pet, team, birth year) the order "
+                   "adds almost nothing -- reordering N words is only N! guesses; use "
+                   "more words, and pick them at random"),
     "mask":       ("a predictable structural template, small enough to enumerate exhaustively",
                    "length and per-position character sets were guessable"),
     "brute":      ("short enough to fall to plain brute force",

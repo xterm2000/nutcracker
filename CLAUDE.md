@@ -8,16 +8,25 @@ Modular dictionary / pattern password cracker — **research & educational use o
 Pure standard-library Python 3.12 (the parent-folder gotchas about venvs don't apply
 here — there are no dependencies to install). Two optional deps, both lazy-imported and
 each needed only for one feature: `bcrypt` (`--algo bcrypt`) and `pyzipper` (`--zip` when
-the archive uses WinZip AES; ZipCrypto archives need nothing).
+the archive uses WinZip AES; ZipCrypto archives need nothing). One optional *integration*,
+no package: `core/opinion.py` calls a local **Ollama** over `urllib` when `OLLAMA_MODEL`
+is set — an LLM second opinion at end of run.
 
 ## Gotchas / warnings
 
 - Runs on headless VM `shiva` — no display, no browser. Nothing here needs one.
 - **Stdlib only.** No `requirements.txt`, no venv. Do not add a dependency without asking.
   The two optional ones are lazy-imported: `bcrypt` inside `HashMatcher` for `--algo
-  bcrypt`, `pyzipper` inside `ZipMatcher` for AES `--zip` archives.
+  bcrypt`, `pyzipper` inside `ZipMatcher` for AES `--zip` archives. `core/opinion.py`
+  talks to Ollama with **stdlib `urllib` only** (no `ollama` package) — keep it that way.
+- The **Ollama second opinion is opt-in and must stay non-fatal**: off unless `OLLAMA_MODEL`
+  is set, and every failure path returns `(None, reason)` — it must never raise or change
+  the exit code. In `-p` mode the report sent to Ollama contains the plaintext.
 - No test suite, no linter, no CI. Verify changes by running `./crack.py` against a known
   target and checking the reported rank/module.
+- `crack.py` exit codes: **0** cracked, **1** real error, **2** bad CLI args (argparse),
+  **3** NOT FOUND in budget. `test.sh` mirrors them; the `Makefile` run-a-crack targets
+  (`run`/`audit`/`script`) treat 3 as success via `$(call keep3)` but still fail on 1/2.
 - Git repo initialized 2026-09-03; **no commits yet**, branch `master`.
 - `data/*.txt` (~340k lines) are committed inputs — never regenerate them programmatically.
 - Global candidate budgets default high (3M/module, 30M total); an unbounded new generator
@@ -41,8 +50,15 @@ the archive uses WinZip AES; ZipCrypto archives need nothing).
 ./crack.py -p 'hunter1990' --hybrid-mask '?d?d?d?d'             # word x mask hybrid
 ./crack.py --hash <h> --algo md5 --wordlist rockyou.txt --rules-file rules/starter.rule
 ./crack.py --zip secret.zip --word acme --dob 1990-05-01 --jobs 4   # crack a zip password
+./crack.py -p 'hey jimmy barbecue' --name 'Jimmy Barbeque' --permute   # known words, any order
+OLLAMA_MODEL=llama3.2 ./crack.py -p 'Summer2024!'   # + local-LLM opinion (env-gated, opt-in)
 ./crack.py --list-modules
 ```
+
+Output per run: a `RUN` table (config), per-module progress with `module N% / total N%`,
+a `SUMMARY` table (result / guesses / crack-time ladder / assessment), tips or the
+NOT-FOUND strength estimate, and — if `OLLAMA_MODEL` set — an `LLM OPINION` panel.
+`test.sh` exposes every `crack.py` flag + the `OLLAMA_*` vars as `${VAR:-default}` knobs.
 
 There is no build step, no test suite, and no linter configured. To exercise a change,
 run `./crack.py` against a known target and confirm the rank/module it reports.
@@ -90,7 +106,12 @@ module list → `Runner` iterates each module's `generate(ctx)`, testing every c
   English-commonness rank — `bundle.is_common(word, cutoff)` — used by `wordchain` to reject
   splits through rare list cruft. The popularity-ordered first-name lists
   (`female_names.txt`, `male_names.txt`, not surnames) are folded into the same rank map
-  (best-of), so short first names (`eve`, `ana`, `kim`) count as real segments.
+  (best-of), so short first names (`eve`, `ana`, `kim`) count as real segments — but
+  a second map `english_rank` keeps the `english_wikipedia.txt` order *without* names,
+  and `bundle.common_words(n)` returns the top-n by that (used for `wordchain`'s
+  hash-mode vocab, where names would be noise). `bundle.position(word)` gives the
+  1-based load-order index of a word (cached) — how many guesses a wordlist attack
+  spends before reaching it, used by `wordchain.estimate_guesses`.
 - **`core/matcher.py`** — the three matchers above (`PlaintextMatcher`, `HashMatcher`,
   `ZipMatcher`). Each exposes `.mode` + `.matches(candidate) -> bool` and nothing else.
 - **`core/rules_engine.py`** — hashcat-rule parser/applier (`tokenize`, `apply`, `RuleSet`,
@@ -99,16 +120,59 @@ module list → `Runner` iterates each module's `generate(ctx)`, testing every c
   `diagnose(target, hint_tokens)` on a **plaintext** `NOT FOUND` regex-classifies the target
   against weak shapes (word+year, leet, embedded date, keyboard walk, run-together words,
   brute-feasible, …) and prints which knob would reach it (skipped in hash/zip mode);
-  `verdict(module, rank, target)` on any `CRACKED` returns a strength tier + per-module
-  "what it is" + better-practice tips, printed under the result.
+  `verdict(module, guesses, target)` on any `CRACKED` returns a strength tier + per-module
+  "what it is" + better-practice tips, printed under the result (`crack.py` feeds it the
+  guess estimate below, not the raw rank).
+- **`core/estimate.py`** — guess-count → wall-clock. `crack_time(guesses, algo=, zip_mode=)`
+  returns `(label, human_time)` rows for a ladder of attack scenarios (throttled online,
+  unthrottled, bcrypt-rate offline, fast-hash GPU rig, + the target's own algo in hash mode);
+  `exhaust_note(keyspace, ctx)` is the short "N to exhaust vs md5" tail the opt-in modules
+  (`mask`, `hybrid`, `fuzz`, `permute`) append to their `note()`. Rates are order-of-magnitude
+  (`_ALGO_RATE`). `crack.py` prints the `crack_time` table under every `CRACKED`; the guess
+  count is the cracking module's own local hit position (`result.stats[-1].tried`), except
+  `wordchain` plaintext which supplies `estimate_guesses(ctx, found)` (∏ segment wordlist
+  positions × separators) since its decomposition only ever yields one candidate.
+  On `NOT FOUND`, `not_found_report(plaintext, tried, algo=, zip_mode=, weak_shape=)` prints a
+  **lower bound** (candidates survived → time at a slow vs fast hash, both modes) and, in
+  plaintext mode only, an honest **upper bound** — `brute_keyspace()` (char-pool ** length,
+  the zxcvbn-style ceiling), annotated "reachable, not strong" when the shape analysis flagged
+  a pattern (`weak_shape`, derived from `diagnose()`'s last line). Hash mode gets the floor
+  only — no string, no structure estimate.
+- **`core/opinion.py`** — optional LLM second opinion. `consult(report)` POSTs the run's
+  report text to a local **Ollama** (`/api/chat` or `/api/generate` per `OLLAMA_URL`,
+  `format: json`, pure `urllib` — no `ollama` package) and returns
+  `({verdict, crack_time, opinion, model}, None)` or `(None, reason)`; never raises, so a
+  missing/broken Ollama can't change the exit code. **Off unless `OLLAMA_MODEL` is set**
+  (`enabled()`); other env: `OLLAMA_URL` (full endpoint, wins) / `OLLAMA_HOST` (bare
+  host/IP ok, default `localhost:11434`), `OLLAMA_TEMPERATURE`, `OLLAMA_TIMEOUT`,
+  `OLLAMA_NUM_CTX` — all also loadable from a gitignored `.env` (`core/dotenv.py`, real
+  env wins). The model returns three keys (`_FIELDS`): a one-word `verdict`, a short
+  `crack_time` phrase, and a free-text `opinion` paragraph — the report it's sent includes
+  the tool's own crack-time ladder and it's told to say whether those figures hold.
+  `crack.py`'s `_second_opinion(report, subject)` calls it at the very end of both the
+  CRACKED and NOT FOUND paths and prints the opinion as a bordered `term.panel` headed by
+  the target, the model name, a colour-coded verdict and the model's `~crack_time`.
+  In `-p` mode the report includes the plaintext, so it goes to whatever `OLLAMA_URL` /
+  `OLLAMA_HOST` points at (localhost by default).
 - **`core/term.py`** — muted 256-colour ANSI helper. `configure(mode)` from `--color`
   (`auto`/`always`/`never`, auto = tty and not `NO_COLOR`); style shortcuts
-  (`label/ok/warn/bad/accent/dim/head`) return text unchanged when disabled. Imported by
-  `crack.py` and `runner.py`.
+  (`label/ok/warn/bad/accent/dim/head`) return text unchanged when disabled. Also
+  `table(rows, title=, kw=, vw=)` — a plain-ASCII box table from `(key, value)` pairs
+  (values wider than `vw` truncated with `~`), used for the `RUN` / `SUMMARY` /
+  `per-module` tables `crack.py` prints, and `panel(body, title=, width=)` — a bordered
+  box that word-wraps free text under an optional header row (the header keeps its own
+  ANSI, measured by visible width), used for the `LLM OPINION`. Imported by `crack.py`
+  and `runner.py`.
 - **`core/runner.py`** — the pipeline. Per-module budget (`limits.module_budget` or a module's
   own `budget` attr) and a global `limits.global_budget` hard stop. A module raising an
   exception is caught and logged, not fatal. Returns a `Result` (found/module/rank + per-module
-  `ModuleStat`s).
+  `ModuleStat`s). Logs one `each step:` line up front (`_target_clause()` — how every candidate
+  is checked: plaintext compare / `md5` digest vs N hashes / zip password), a `trying <plain
+  description>` line per module (`_MODULE_ACTION`), and progress via `_Progress`, which doubles
+  its print interval every 5 lines (announcing each reduction) so a 25M-candidate module logs a
+  handful of lines, not 25. Each progress line and the per-module `done:` line show
+  `module N% / total N%` (progress through this module's effective budget and the global
+  budget). `_Progress` is shared with `core/parallel.py` (passed in as `progress=`).
 
 ## Modules (`modules/`)
 
@@ -118,10 +182,12 @@ Registered in `modules/__init__.py`. Each is a class exposing: `name` (unique), 
 `note(ctx)` (advisory string printed before the module runs).
 
 Run order (by `order`, cheap + bounded first, budget-eaters last):
-context 3, pins 5, phone 6, sequences 8, keyboard 9, dictionary 10, dates 14,
+context 3, pins 5, phone 6, sequences 8, keyboard 9, dictionary 10,
+**permute 12** *(opt-in — only with `--permute`)*, dates 14,
 **wordchain 7** *(plaintext only — the decomposition check is ≤1 candidate)*,
-rules 20, dobwords 24, **wordchain 26** *(hash mode — `build(mode=...)` bumps it here so
-its k-word-chain keyspace doesn't starve `dictionary`/`rules` of budget)*,
+rules 20, **fuzz 22** *(opt-in — only with `--fuzz`)*, dobwords 24,
+**wordchain 26** *(hash mode — `build(mode=...)` bumps it here so its k-word-chain
+keyspace doesn't starve `dictionary`/`rules` of budget)*,
 **hybrid 30** *(opt-in — only with `--hybrid-mask`)*, mask 40.
 
 `keyboard` covers QWERTY row/column walks, the curated set (`qwerty`, `1qaz2wsx`, …),
@@ -134,6 +200,32 @@ words (default 2000), both the word and its `.capitalize()` form. `--hybrid-side
 = `append` (`hunter1990`) / `prepend` (`99hunter`) / `both` (default). Word-major so a
 budget cut still sweeps the whole mask against the likeliest bases; keyspace =
 vocab × mask × sides, printed via `note()`. Appended only when `--hybrid-mask` is given.
+
+`fuzz` (`modules/fuzz.py`) is opt-in via `--fuzz N` (N clamped to 1–2). It yields the
+top `--fuzz-vocab` words (default 2000) *plus the hint tokens* with up to N
+single-character substitutions — length-preserving, i.e. Hamming distance ≤ N — the
+one gap `rules`/`leet_variants` leave (an arbitrary non-leet swap, a baked-in typo).
+`--fuzz-charset`: `sub` (default, `a–z0–9!@#$%`), `kbd` (keyboard-adjacent keys only,
+from a QWERTY-grid adjacency map built at import), a `mask.CHARSETS` spec, or a literal
+string. Variants already in the wordlist are skipped (`dictionary` covers them);
+breadth-first over (position-combos, then words) so a budget cut keeps even coverage.
+Keyspace ≈ vocab × L × (A−1) at N=1; N=2 multiplies by `C(L,2)·(A−1)` so it bumps its
+own `budget` to 25M and still wants `--fuzz-vocab` in the low hundreds. `note()` prints
+the estimate. Plumbed through `modules.build(fuzz=, fuzz_vocab=, fuzz_charset=)`.
+
+`permute` (`modules/permute.py`) is opt-in via `--permute`. It takes the hint
+tokens (`--word`/`--name`/`--user`/`--email`, via `ctx.hints.tokens()`, capped at
+8 to bound the factorial), tries them in **every order**, glued with each
+separator (`--permute-sep`, default `none,space,-,_,.`), in plain + Capitalised
+(+ UPPER/lower with `cases="all"`) forms. `--permute-fill N` (0–2) additionally
+inserts `N` unknown slots drawn from `bundle.common_words(--permute-vocab)`
+(default top 200, frequency-ordered) — filler-major so the likeliest missing
+words sweep every arrangement first; `budget` bumps to 25M when fill ≥ 1.
+Keyspace = `perm(t+fill) × seps × cases × vocab^fill`; `note()` prints it. Fills
+the "I know most of a passphrase but not the word order / am missing a word or
+two" gap that `context` (pairs only) and hash-mode `wordchain` (ignores hints)
+leave. Plumbed through `modules.build(permute=, permute_seps=, permute_fill=,
+permute_vocab=)`.
 
 `dobwords` is only live when `--dob` is given (yields nothing otherwise). It glues
 birthday-derived dates onto known bases — not the exact DOB only but a birthday *window*
@@ -159,8 +251,14 @@ tokens (`--word/--user/--name/--email`) count as valid segments, so `MitekSintec
 only with `--word Mitek --word Sintec`; a target that is itself a listed word is left to
 `dictionary`/`rules`, not re-tiled here. In hash
 mode it generates k-word chains (`k = 2..--chain-words`) from the top `--chain-vocab`
-words, keyspace ~ Nᵏ, relying on the module budget to cap. `mask` is appended **only** when
-`--mask` or `--brute` is given. `--only` / `--skip` filter by `name` after construction.
+words **by English frequency** (`bundle.common_words()` — `english_rank`, the
+`english_wikipedia.txt` line order with name lists excluded, *not* the merged
+load-order `top()` which front-loads breach passwords). Keyspace ~ Nᵏ, module
+budget caps it; k=2 pairs use the full `GLUE` set (`''`/`' '` first), k≥3 only
+`''`/`' '`/`'.'`. This reaches 2-word (and short 3-word) common-English
+passphrases; a long passphrase stays out of reach (correctly) — use `--wordlist`
+with a phrase list for known quotes. `mask` is appended **only** when `--mask` or
+`--brute` is given. `--only` / `--skip` filter by `name` after construction.
 
 `rules` runs its **built-in** breadth-first mangle set unless `--rules-file PATH` is given,
 in which case that hashcat-style rule file *replaces* the built-in set: raw words first,

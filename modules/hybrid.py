@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import itertools
 
+from core import estimate
 from modules.mask import _parse_mask
 
 
@@ -51,7 +52,8 @@ class HybridModule:
             mask_k *= max(len(pos), 1)
         sides = "append+prepend" if self.side == "both" else self.side
         return (f"~{self.keyspace():,} candidates "
-                f"(~{self.vocab} words x {mask_k:,} mask x {sides})")
+                f"(~{self.vocab} words x {mask_k:,} mask x {sides}) -- "
+                f"{estimate.exhaust_note(self.keyspace(), ctx)}")
 
     def generate(self, ctx):
         if not self.mask:

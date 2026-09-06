@@ -24,8 +24,10 @@ from __future__ import annotations
 from core.context import CURRENT_YEAR
 from modules.rules import leet_variants
 
-# glue tried between words when *generating* (hash mode)
-GLUE = ["", ".", "_", "-", " ", "1", "123", "!", "@", str(CURRENT_YEAR)]
+# glue tried between words when *generating* (hash mode) -- passphrase
+# separators ('', ' ') first so 'let me in' is reached before the combinator-
+# style digit/symbol glues eat the budget
+GLUE = ["", " ", ".", "_", "-", "1", "123", "!", "@", str(CURRENT_YEAR)]
 # glue accepted between words when *decomposing* a known plaintext
 SPLIT_SEP = ["", " ", ".", "_", "-", "+"]
 
@@ -215,9 +217,40 @@ class WordChainModule:
             self._decomp = (target, parts)
         return self._decomp[1]
 
+    def estimate_guesses(self, ctx, found=None):
+        """Plaintext mode only: the decomposition yields a single candidate, so
+        `rank` would say ~1. Estimate what a real multi-word attack would spend
+        reaching this exact phrase instead: the product of each segment's
+        position in the wordlist (a word deep in the list costs that many
+        guesses to reach) times the separator choices. Returns
+        (guesses, explanation) or None."""
+        parts = self._resolve(ctx)
+        if not parts or len(parts) < 2:
+            return None
+        bundle = ctx.wordlists
+        hint_low = {t.lower() for t in ctx.hints.tokens()}
+        product = 1
+        bits: list[str] = []
+        for p in parts:
+            lp = p.lower()
+            pos = bundle.position(lp)
+            if pos is None:
+                # only reachable because a --word/--name hint put it in scope;
+                # a blind attacker pays a deep targeted-wordlist penalty
+                pos = 50_000 if lp in hint_low else 200_000
+                bits.append(f"{p}~{pos:,}({'hint' if lp in hint_low else 'rare'})")
+            else:
+                bits.append(f"{p}~{pos:,}")
+            product *= max(pos, 1)
+        seps = len(SPLIT_SEP)
+        total = product * seps
+        return total, " x ".join(bits) + f" x {seps} separators"
+
     def note(self, ctx):
         if ctx.mode != "plaintext":
-            return None
+            v = self.vocab or ctx.limits.chain_vocab
+            return (f"k=2..{self.chain_words} chains from the top {v:,} English words "
+                    f"(~{v * v:,} pairs, deeper chains budget-capped)")
         parts = self._resolve(ctx)
         if parts and len(parts) >= 2:
             return f"decomposes into {len(parts)} dictionary words: {' + '.join(parts)}"
@@ -240,7 +273,9 @@ class WordChainModule:
         yield from rec("", 0)
 
     def _generate_hash(self, ctx):
-        top = ctx.wordlists.top(self.vocab or ctx.limits.chain_vocab)
+        # frequency-ordered, not load-order: passphrases are built from ordinary
+        # English words ('this is my gun'), which sit deep in the merged list
+        top = ctx.wordlists.common_words(self.vocab or ctx.limits.chain_vocab)
         # k = 2 first (cheapest, highest value), full glue set + capitalised join
         for a in top:
             ca = a.capitalize()
