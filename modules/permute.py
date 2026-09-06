@@ -7,9 +7,11 @@ The gap this fills: you remember most of a passphrase but not the word order
 hash mode ignores the hint tokens entirely. This module anchors on exactly
 the words you supply.
 
-Opt-in via ``--permute``. Keyspace = perm(t + fill) x separators x cases x
-vocab**fill -- ``--permute-fill`` > 0 multiplies hard, so it caps the filler
-vocab low and bumps the module budget.
+Opt-in via ``--permute``. Every ordered *subset* of the tokens (size 2..t) is
+tried, smallest first -- so a 3-word password is still found when ``--name``
+alone has expanded the token pool to six or seven. Keyspace = sum over k of
+(ordered k-subsets) x separators x cases x vocab**fill -- ``--permute-fill`` > 0
+multiplies hard, so it caps the filler vocab low and bumps the module budget.
 
   --word this --word my --word rifle --word gun --permute
       -> 'this my rifle gun', 'my this gun rifle', 'this-my-rifle-gun', ...
@@ -19,8 +21,8 @@ vocab low and bumps the module budget.
 
 from __future__ import annotations
 
-from itertools import permutations, product
-from math import factorial
+from itertools import combinations, permutations, product
+from math import comb, factorial
 
 from core import estimate
 
@@ -62,12 +64,20 @@ class PermuteModule:
             yield [p.lower() for p in parts]
 
     def _estimate(self, ctx) -> int:
-        t = len(self._tokens(ctx))
+        t = min(len(self._tokens(ctx)), _MAX_TOKENS)
         if t < 2:
             return 0
-        perms = factorial(min(t + self.fill, _MAX_TOKENS))
-        v = max(1, len(self._fillers(ctx))) ** self.fill if self.fill else 1
-        return perms * len(self.seps) * _CASE_MULT[self.cases] * v
+        # every ordered subset of size 2..t (partial permutations), not just
+        # the full-length arrangement
+        if self.fill:
+            arrangements = sum(comb(t, k) * factorial(k + self.fill)
+                               for k in range(2, t + 1))
+            v = max(1, len(self._fillers(ctx))) ** self.fill
+        else:
+            arrangements = sum(factorial(t) // factorial(t - k)
+                               for k in range(2, t + 1))
+            v = 1
+        return arrangements * len(self.seps) * _CASE_MULT[self.cases] * v
 
     def note(self, ctx):
         t = len(self._tokens(ctx))
@@ -94,13 +104,20 @@ class PermuteModule:
                         seen.add(s)
                         yield s
 
+        # breadth-first over subset size: a password built from only 3 of the
+        # known tokens must not wait behind every full-length arrangement
+        # (a single --name already expands to half a dozen tokens)
         if self.fill <= 0:
-            for perm in permutations(toks):
-                yield from emit(list(perm))
+            for k in range(2, len(toks) + 1):
+                for perm in permutations(toks, k):
+                    yield from emit(list(perm))
             return
 
         # filler-major: common_words() is frequency-ordered, so the likeliest
         # missing words are swept against every arrangement first
-        for fills in product(self._fillers(ctx), repeat=self.fill):
-            for perm in permutations(toks + list(fills)):
-                yield from emit(list(perm))
+        fillers = self._fillers(ctx)
+        for fills in product(fillers, repeat=self.fill):
+            for k in range(2, len(toks) + 1):
+                for combo in combinations(toks, k):
+                    for perm in permutations(list(combo) + list(fills)):
+                        yield from emit(list(perm))

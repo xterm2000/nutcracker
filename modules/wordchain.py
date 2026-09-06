@@ -55,9 +55,14 @@ def _norm(s: str) -> str:
     return s.lower()
 
 
-def _digits_ok(tok: str, *, at_end: bool) -> bool:
-    """A numeric segment: only a short run, and only trailing."""
-    return tok.isdigit() and len(tok) <= 4 and at_end
+def _digits_ok(tok: str, *, at_end: bool, allow_year: bool = False) -> bool:
+    """A numeric segment: a short trailing run, or -- when `allow_year` -- an
+    interior 4-digit year (`_gate` then checks it sits between two hint tokens)."""
+    if not tok.isdigit():
+        return False
+    if at_end:
+        return len(tok) <= 4
+    return allow_year and len(tok) == 4 and 1900 <= int(tok) <= CURRENT_YEAR + 1
 
 
 # --- lenient path: the target has whitespace, so the user typed the word
@@ -115,7 +120,8 @@ def _strong_word(chunk: str, wordset: set[str], bundle) -> str | None:
     return None
 
 
-def _best_segmentation(target: str, wordset: set[str], bundle) -> list[str] | None:
+def _best_segmentation(target: str, wordset: set[str], bundle,
+                       hints: frozenset[str] = frozenset()) -> list[str] | None:
     """Fewest-parts segmentation of `target` into strong words + at most one
     short trailing number, or None."""
     n = len(target)
@@ -136,7 +142,7 @@ def _best_segmentation(target: str, wordset: set[str], bundle) -> list[str] | No
             piece = target[i:j]
             w: str | None = None
             if piece.isdigit():
-                if _digits_ok(piece, at_end=(j == n)):
+                if _digits_ok(piece, at_end=(j == n), allow_year=bool(hints)):
                     w = piece
             else:
                 w = _strong_word(piece, wordset, bundle)
@@ -157,7 +163,8 @@ def _best_segmentation(target: str, wordset: set[str], bundle) -> list[str] | No
     return solve(0, 0)
 
 
-def _gate(parts: list[str], target: str) -> bool:
+def _gate(parts: list[str], target: str,
+          hints: frozenset[str] = frozenset()) -> bool:
     if len(parts) < 2:
         return False
     if len(parts) > max(2, len(target) // 3 + 1):
@@ -165,8 +172,16 @@ def _gate(parts: list[str], target: str) -> bool:
     nums = [p for p in parts if p.isdigit()]
     if len(nums) > 1:
         return False
-    if nums and parts[-1] != nums[0]:      # number must be last
-        return False
+    if nums:
+        idx = parts.index(nums[0])
+        if idx != len(parts) - 1:          # interior number: only a 4-digit
+            year = nums[0]                 # year wedged between two hint tokens
+            flanked = (0 < idx < len(parts) - 1
+                       and parts[idx - 1].lower() in hints
+                       and parts[idx + 1].lower() in hints)
+            if not (flanked and len(year) == 4
+                    and 1900 <= int(year) <= CURRENT_YEAR + 1):
+                return False
     alpha = [p for p in parts if p.isalpha()]
     if len(alpha) < 2:
         return False
@@ -183,15 +198,16 @@ def decompose(target: str, ctx_words, extra: list[str] | None = None) -> list[st
         return None
     bundle = ctx_words
     real_words = {w.lower() for w in bundle if len(w) >= 2}
-    wordset = real_words | {w.lower() for w in (extra or []) if len(w) >= 2}
+    hint_low = frozenset(w.lower() for w in (extra or []) if len(w) >= 2)
+    wordset = real_words | set(hint_low)
     if any(c.isspace() for c in target):
         return _passphrase_split(target, wordset)
     # a target that is itself a listed word is a single-word password --
     # let `dictionary` / `rules` report it, don't re-tile it here
     if target.lower() in real_words:
         return None
-    parts = _best_segmentation(target, wordset, bundle)
-    if parts and _gate(parts, target):
+    parts = _best_segmentation(target, wordset, bundle, hint_low)
+    if parts and _gate(parts, target, hint_low):
         return parts
     return None
 

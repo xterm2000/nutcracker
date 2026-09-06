@@ -18,7 +18,9 @@
 #   <hex>     hash mode   -- crack that exact digest (set ALGO to match)
 #   0         plaintext   -- guessability audit of PASSP via -p (no hashing);
 #                            empty PASSP -> crack.py prompts (SHOW=1 = visible)
-# HASHFILE / ZIP override the target entirely when set.
+# HASHFILE / ZIP / GPG / SSHKEY override the target entirely when set
+# (GPG = symmetric OpenPGP file, SSHKEY = encrypted private key; both slow --
+#  keep MODULE_BUDGET small and raise JOBS).
 #
 # Exit code mirrors crack.py: 0 = cracked, 3 = not found in budget, other = error.
 # The `|| rc=$?` keeps `set -e` from aborting on the expected exit 3.
@@ -38,6 +40,8 @@ ALGO="${ALGO:-md5}"                       # --algo   : md5/sha1/sha256/.../bcryp
 HASH="${HASH:-}"                          # unset=self-test, <hex>=digest, 0=plaintext
 HASHFILE="${HASHFILE:-}"                  # --hashfile : file of digests, one per line
 ZIP="${ZIP:-}"                            # --zip      : password-protected .zip to crack
+GPG="${GPG:-}"                            # --gpg      : symmetric OpenPGP file (gpg -c)
+SSHKEY="${SSHKEY:-}"                      # --sshkey   : encrypted OpenSSH / PEM private key
 SHOW="${SHOW:-}"                          # non-empty + HASH=0 + empty PASSP: --show (visible prompt)
 SALT_PREFIX="${SALT_PREFIX:-}"            # --salt-prefix : salt prepended before hashing
 SALT_SUFFIX="${SALT_SUFFIX:-}"           # --salt-suffix : salt appended before hashing
@@ -45,7 +49,7 @@ SALT_SUFFIX="${SALT_SUFFIX:-}"           # --salt-suffix : salt appended before 
 # self-test: no HASH/HASHFILE/ZIP given -> hash PASSP ourselves and crack that.
 # Use the coreutils tool for $ALGO if it exists ("${ALGO}sum"), else fall back to
 # md5 (and pin ALGO to match, so the digest and --algo never disagree).
-if [[ -z "$HASH" && -z "$HASHFILE" && -z "$ZIP" ]]; then
+if [[ -z "$HASH" && -z "$HASHFILE" && -z "$ZIP" && -z "$GPG" && -z "$SSHKEY" ]]; then
     if command -v "${ALGO}sum" >/dev/null 2>&1; then
         HASH="$(printf '%s' "$PASSP" | "${ALGO}sum" | awk '{print $1}')"
     else
@@ -133,6 +137,10 @@ read -ra WORDLIST_LIST <<< "$WORDLIST"
 
 if [[ -n "$ZIP" ]]; then
     ARGS=(--zip "$ZIP")
+elif [[ -n "$GPG" ]]; then
+    ARGS=(--gpg "$GPG")
+elif [[ -n "$SSHKEY" ]]; then
+    ARGS=(--sshkey "$SSHKEY")
 elif [[ -n "$HASHFILE" ]]; then
     ARGS=(--hashfile "$HASHFILE" --algo "$ALGO")
 elif [[ "$HASH" == 0 ]]; then
@@ -197,6 +205,8 @@ tbar
 printf '| %-*s |\n' "$((KW+VW+3))" "test.sh"
 tbar
 if   [[ -n "$ZIP"      ]]; then trow mode "zip archive"; trow target "$ZIP"
+elif [[ -n "$GPG"      ]]; then trow mode "symmetric gpg"; trow target "$GPG"
+elif [[ -n "$SSHKEY"   ]]; then trow mode "ssh private key"; trow target "$SSHKEY"
 elif [[ -n "$HASHFILE" ]]; then trow mode "hashfile ($ALGO)"; trow target "$HASHFILE"
 elif [[ "$HASH" == 0   ]]; then trow mode "plaintext audit (-p)"; trow pass "${PASSP:-<prompt>}"
 else

@@ -6,11 +6,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Modular dictionary / pattern password cracker — **research & educational use only**.
 Pure standard-library Python 3.12 (the parent-folder gotchas about venvs don't apply
-here — there are no dependencies to install). Two optional deps, both lazy-imported and
-each needed only for one feature: `bcrypt` (`--algo bcrypt`) and `pyzipper` (`--zip` when
-the archive uses WinZip AES; ZipCrypto archives need nothing). One optional *integration*,
-no package: `core/opinion.py` calls a local **Ollama** over `urllib` when `OLLAMA_MODEL`
-is set — an LLM second opinion at end of run.
+here — there are no dependencies to install). Two optional Python deps, both
+lazy-imported and each needed only for one feature: `bcrypt` (`--algo bcrypt`) and
+`pyzipper` (`--zip` when the archive uses WinZip AES; ZipCrypto archives need nothing).
+Two optional *external binaries* (no package): `gpg` for `--gpg` (symmetric OpenPGP)
+and `ssh-keygen` for `--sshkey` (encrypted private key) — the matcher shells out once
+per candidate. One optional *integration*, no package: `core/opinion.py` calls a local
+**Ollama** over `urllib` when `OLLAMA_MODEL` is set — an LLM second opinion at end of run.
 
 ## Gotchas / warnings
 
@@ -19,11 +21,27 @@ is set — an LLM second opinion at end of run.
   The two optional ones are lazy-imported: `bcrypt` inside `HashMatcher` for `--algo
   bcrypt`, `pyzipper` inside `ZipMatcher` for AES `--zip` archives. `core/opinion.py`
   talks to Ollama with **stdlib `urllib` only** (no `ollama` package) — keep it that way.
+- **`--gpg` / `--sshkey` are subprocess-per-candidate** (`GpgMatcher` / `SshKeyMatcher`
+  in `core/matcher.py`, `mode = "hash"`). A `gpg`/`ssh-keygen` spawn is a ~1-5 ms floor
+  and the KDFs (OpenPGP S2K, OpenSSH bcrypt-pbkdf) are slow by design, so only the cheap
+  bounded modules (`context`, `pins`, `dictionary`, `rules` at a modest budget) are
+  realistic — `--mask`/`--brute` over any real keyspace is not. Each guess has a 10 s
+  timeout (a hang = non-match, never a crash). `--jobs N` gives a near-linear speed-up
+  (fork workers, one subprocess each — like ZipCrypto). `--gpg` is **symmetric-only**
+  (`gpg -c`): a `gpg -e` public-key file or a bare exported secret key can't be attacked
+  with a passphrase guess. `--sshkey` requires an *encrypted* key (unencrypted → startup
+  error). Crack-time rates live in `core/estimate.py:_ALGO_RATE` (`gpg` 1e7/s GPU,
+  `ssh-key` 5e3/s) — order-of-magnitude offline-cracker figures.
 - The **Ollama second opinion is opt-in and must stay non-fatal**: off unless `OLLAMA_MODEL`
   is set, and every failure path returns `(None, reason)` — it must never raise or change
   the exit code. In `-p` mode the report sent to Ollama contains the plaintext.
-- No test suite, no linter, no CI. Verify changes by running `./crack.py` against a known
-  target and checking the reported rank/module.
+- **Testing gotcha:** `crack.py` auto-loads `.env` at startup (`dotenv.load`), so if
+  `OLLAMA_MODEL` is set there **every run fires a real inference call at the remote
+  Ollama GPU** (`OLLAMA_URL` in `.env` points off-box). When running `./crack.py`
+  repeatedly to verify a change, prefix `OLLAMA_MODEL= ` to suppress the opinion call —
+  don't hammer the GPU.
+- No test suite, no linter, no CI. Verify changes by running `OLLAMA_MODEL= ./crack.py`
+  against a known target and checking the reported rank/module.
 - `crack.py` exit codes: **0** cracked, **1** real error, **2** bad CLI args (argparse),
   **3** NOT FOUND in budget. `test.sh` mirrors them; the `Makefile` run-a-crack targets
   (`run`/`audit`/`script`) treat 3 as success via `$(call keep3)` but still fail on 1/2.
@@ -50,6 +68,8 @@ is set — an LLM second opinion at end of run.
 ./crack.py -p 'hunter1990' --hybrid-mask '?d?d?d?d'             # word x mask hybrid
 ./crack.py --hash <h> --algo md5 --wordlist rockyou.txt --rules-file rules/starter.rule
 ./crack.py --zip secret.zip --word acme --dob 1990-05-01 --jobs 4   # crack a zip password
+./crack.py --gpg secret.txt.gpg --jobs 4 --only context,pins,dictionary,rules   # symmetric OpenPGP
+./crack.py --sshkey id_ed25519 --wordlist rockyou.txt --jobs 4     # SSH key passphrase
 ./crack.py -p 'hey jimmy barbecue' --name 'Jimmy Barbeque' --permute   # known words, any order
 OLLAMA_MODEL=llama3.2 ./crack.py -p 'Summer2024!'   # + local-LLM opinion (env-gated, opt-in)
 ./crack.py --list-modules
@@ -65,7 +85,8 @@ run `./crack.py` against a known target and confirm the rank/module it reports.
 
 ## Target modes
 
-Selected in `crack.py:resolve_target`, surfaced as `ctx.mode` (`"plaintext"` or `"hash"`):
+Selected in `crack.py:resolve_target`, surfaced as `ctx.mode` (`"plaintext"` or `"hash"` —
+zip/gpg/sshkey all report `"hash"`):
 
 - **plaintext** (`-p` / prompted): `PlaintextMatcher` — candidate `==` the known string.
   A guessability audit that reports *whether* and *at what rank* the enabled attacks reach it.
@@ -79,6 +100,16 @@ Selected in `crack.py:resolve_target`, surfaced as `ctx.mode` (`"plaintext"` or 
   CRC verified, so no ZipCrypto header-check false positive). The archive handle is opened
   lazily *per process* (`_zf` starts `None`) so `--jobs N` gets one handle per fork worker;
   ZipCrypto is pure-Python CPU-bound, so `--jobs` genuinely helps here.
+- **gpg** (`--gpg PATH`): `GpgMatcher`, `mode = "hash"`, `algo = "gpg"` — each candidate
+  is a `gpg --batch --pinentry-mode loopback --passphrase … --decrypt` child; return 0 =
+  hit. **Symmetric OpenPGP only** (`gpg -c`): a public-key (`gpg -e`) file or a bare
+  exported secret key can't be attacked this way. Needs `gpg`/`gpg2` on PATH (missing →
+  `SystemExit` with an install hint). 10 s per-guess timeout. Subprocess-bound → keep to
+  cheap modules + small `--module-budget`, raise `--jobs`.
+- **sshkey** (`--sshkey PATH`): `SshKeyMatcher`, `mode = "hash"`, `algo = "ssh-key"` —
+  each candidate runs `ssh-keygen -y -P <cand> -f KEY` (return 0 = hit; writes nothing).
+  Startup probe with the empty passphrase rejects an unencrypted key. Modern OpenSSH
+  format + legacy PEM both work; bcrypt-pbkdf is very slow, so same guidance as `--gpg`.
 
 Modules may set `plaintext_only = True` to be skipped in hash mode (none do currently —
 `wordchain` instead branches on `ctx.mode` internally: a word-break decomposition of the
@@ -112,8 +143,10 @@ module list → `Runner` iterates each module's `generate(ctx)`, testing every c
   hash-mode vocab, where names would be noise). `bundle.position(word)` gives the
   1-based load-order index of a word (cached) — how many guesses a wordlist attack
   spends before reaching it, used by `wordchain.estimate_guesses`.
-- **`core/matcher.py`** — the three matchers above (`PlaintextMatcher`, `HashMatcher`,
-  `ZipMatcher`). Each exposes `.mode` + `.matches(candidate) -> bool` and nothing else.
+- **`core/matcher.py`** — the five matchers above (`PlaintextMatcher`, `HashMatcher`,
+  `ZipMatcher`, `GpgMatcher`, `SshKeyMatcher`). Each exposes `.mode` + `.matches(candidate)
+  -> bool` (`HashMatcher`/`GpgMatcher`/`SshKeyMatcher` also carry an `.algo` string the
+  estimate/crack-time code reads — `"gpg"` / `"ssh-key"` map to rates in `estimate.py`).
 - **`core/rules_engine.py`** — hashcat-rule parser/applier (`tokenize`, `apply`, `RuleSet`,
   `load`). Used only when `--rules-file` is given; see the `rules` module note below.
 - **`core/shapes.py`** — two analysis helpers, advisory only, never touch the result or rank:
@@ -182,12 +215,13 @@ Registered in `modules/__init__.py`. Each is a class exposing: `name` (unique), 
 `note(ctx)` (advisory string printed before the module runs).
 
 Run order (by `order`, cheap + bounded first, budget-eaters last):
-context 3, pins 5, phone 6, sequences 8, keyboard 9, dictionary 10,
-**permute 12** *(opt-in — only with `--permute`)*, dates 14,
-**wordchain 7** *(plaintext only — the decomposition check is ≤1 candidate)*,
+context 3, pins 5, phone 6, **bip39 7**, **wordchain 7**, sequences 8, keyboard 9,
+dictionary 10, **permute 12** *(opt-in — only with `--permute`)*, dates 14,
+*(bip39 & wordchain 7 are plaintext-mode: a decomposition check, ≤1 candidate;
+bip39 is appended first so it claims the rank for an all-BIP-39 phrase)*,
 rules 20, **fuzz 22** *(opt-in — only with `--fuzz`)*, dobwords 24,
-**wordchain 26** *(hash mode — `build(mode=...)` bumps it here so its k-word-chain
-keyspace doesn't starve `dictionary`/`rules` of budget)*,
+**wordchain 26 / bip39 27** *(hash mode — `build(mode=...)` bumps both here so their
+k-word-chain keyspaces don't starve `dictionary`/`rules` of budget)*,
 **hybrid 30** *(opt-in — only with `--hybrid-mask`)*, mask 40.
 
 `keyboard` covers QWERTY row/column walks, the curated set (`qwerty`, `1qaz2wsx`, …),
@@ -260,6 +294,19 @@ passphrases; a long passphrase stays out of reach (correctly) — use `--wordlis
 with a phrase list for known quotes. `mask` is appended **only** when `--mask` or
 `--brute` is given. `--only` / `--skip` filter by `name` after construction.
 
+`bip39` (`modules/bip39.py`, always appended) reads the target as a sequence of
+words from the 2048-word BIP-39 English list (`data/bip39.txt`, one word/line;
+missing file → module inactive). Plaintext: a fewest-parts word-break of the
+exact target (whitespace form or run-together), ≥2 words → reported;
+`estimate_guesses` returns `2048**words × seps` — a real 12/15/18/21/24-word seed
+lands here as **strong** (out of brute-force reach), a 2-4 word "clever"
+passphrase as very weak / weak. Hash mode: breadth-first k=2..4 chains from the
+2048 words (`_GEN_SEPS` = `' '`/`''`/`'-'`; k≥3 only `' '`/`''`), `budget` 8M.
+`shapes.verdict` has a `bip39` branch that tiers on the real keyspace, not the
+within-budget rank. Runs at order 7 just before `wordchain` so an all-BIP-39
+phrase is attributed to `bip39`; `wordchain` still handles phrases with any
+non-BIP-39 word.
+
 `rules` runs its **built-in** breadth-first mangle set unless `--rules-file PATH` is given,
 in which case that hashcat-style rule file *replaces* the built-in set: raw words first,
 then rule-major (each rule applied across every word, so a budget cut leaves the first N
@@ -285,8 +332,10 @@ real-world `.rule` files still load. Sample: `rules/starter.rule` (~73 rules).
 
 ## Data
 
-`data/` holds the eight plaintext wordlists (~340k lines total), committed to the repo. They are
-inputs, not generated — don't rewrite them programmatically.
+`data/` holds the eight general wordlists (~340k lines total) loaded by
+`core/wordlists.py`, plus `bip39.txt` (the 2048-word BIP-39 English list, used
+only by the `bip39` module). All committed inputs, not generated — don't rewrite
+them programmatically.
 
 `rules/` holds committed hashcat-style rule files (`starter.rule`) for `--rules-file`. Also
 inputs — hand-maintained, not generated.

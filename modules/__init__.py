@@ -11,6 +11,7 @@ Each module exposes:
 
 from __future__ import annotations
 
+from modules.bip39 import Bip39Module
 from modules.context_based import ContextModule
 from modules.dates import DateModule
 from modules.dictionary import DictionaryModule
@@ -56,6 +57,11 @@ def build(only=None, skip=None, *, mode="plaintext", chain_words=3, chain_vocab=
         insts.append(PermuteModule(seps=permute_seps, fill=permute_fill,
                                    vocab=permute_vocab))
 
+    bip = Bip39Module()
+    if mode == "hash":
+        bip.order = 27          # same reason as wordchain below -- 2048**k blows up
+    insts.append(bip)
+
     wc = WordChainModule(chain_words=chain_words, vocab=chain_vocab)
     if mode == "hash":
         # hash-mode wordchain is a big generator with low relative yield --
@@ -79,4 +85,4 @@ def build(only=None, skip=None, *, mode="plaintext", chain_words=3, chain_vocab=
 
 def names():
     return [cls().name for cls in ALWAYS] + [
-        "wordchain", "dobwords", "hybrid", "fuzz", "permute", "mask"]
+        "bip39", "wordchain", "dobwords", "hybrid", "fuzz", "permute", "mask"]

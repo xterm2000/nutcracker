@@ -68,6 +68,9 @@ _MODULE_WHY = {
                    "a birthday is easy to look up and adds almost no keyspace"),
     "context":    ("built from personal info an attacker can look up (name, email handle, DOB)",
                    "those are the first hints a targeted attacker feeds in"),
+    "bip39":      ("a BIP-39 mnemonic word sequence",
+                   "a short 2-4 word BIP-39 passphrase is only 2048^words; a real "
+                   "12+ word seed is strong but must never be used as a login password"),
     "wordchain":  ("several common words run together",
                    "concatenation only helps if the words are individually rare -- "
                    "use more words, chosen at random"),
@@ -92,6 +95,25 @@ def verdict(module: str, rank: int, target: str,
             global_budget: int = 30_000_000) -> tuple[str, list[str]]:
     """Return ('<tier> -- <what it is>', [up to 4 better-practice tips])."""
     n = len(target)
+
+    if module == "bip39":
+        # `rank` here is a real 2048**words keyspace (estimate_guesses), not a
+        # within-budget hit position -- tier on the actual number
+        if rank <= 10 ** 10:
+            tier = "very weak"
+        elif rank <= 10 ** 14:
+            tier = "weak"
+        elif rank <= 10 ** 19:
+            tier = "brute-forceable offline (fine against a slow hash, lost if the hash leaks)"
+        else:
+            tier = "strong -- 2048^words is out of reach of offline brute force"
+        why, tip = _MODULE_WHY["bip39"]
+        return f"{tier} -- {why}", [
+            tip,
+            "a seed phrase belongs in a wallet, never as a login password",
+            "never reuse it -- one breach then exposes every account that shares it",
+        ]
+
     brute_like = module in ("mask", "brute")
     if rank <= 1_000:
         tier = "trivial"

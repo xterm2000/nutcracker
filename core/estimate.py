@@ -23,6 +23,10 @@ _ALGO_RATE = {
     "md5": 1e11, "sha1": 6e10, "sha224": 1e10, "sha256": 1e10,
     "sha384": 3e9, "sha512": 3e9, "sha3_256": 5e9, "sha3_512": 3e9,
     "blake2b": 4e9, "blake2s": 6e9, "ntlm": 3e11, "bcrypt": 2e4,
+    # subprocess-driven targets: an offline cracker (john/hashcat) attacking
+    # the extracted hash, order-of-magnitude. gpg = OpenPGP S2K on a GPU;
+    # ssh-key = OpenSSH aes256 + bcrypt-pbkdf (memory-hard, slower than bcrypt).
+    "gpg": 1e7, "ssh-key": 5e3,
 }
 
 # scenarios always shown, slowest first: (long label, short label, guesses/sec)

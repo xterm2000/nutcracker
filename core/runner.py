@@ -21,6 +21,7 @@ _MODULE_ACTION = {
     "keyboard":   "keyboard walks and finger-mash patterns (qwerty, asdasd, q1w2e3)",
     "dates":      "years, full calendar dates, season+year, month names",
     "rules":      "each wordlist word mangled -- case flips, leet, digit and year tails",
+    "bip39":      "the target read as BIP-39 mnemonic words; hash mode chains 2-4 of them",
     "wordchain":  "several dictionary words run together, with a separator or none",
     "dobwords":   "hint words glued to dates around the given birthday",
     "hybrid":     "each top word glued to every string the mask expands to",
@@ -116,6 +117,10 @@ class Runner:
         if cls == "ZipMatcher":
             kind = "AES" if getattr(m, "_aes", False) else "ZipCrypto"
             return f"trying each candidate as the password for {kind} archive entry {m._entry!r}"
+        if cls == "GpgMatcher":
+            return "running `gpg --decrypt` with each candidate as the symmetric passphrase"
+        if cls == "SshKeyMatcher":
+            return "running `ssh-keygen -y` with each candidate as the key passphrase"
         if cls == "HashMatcher":
             n = len(m.targets)
             plural = "es" if n != 1 else ""

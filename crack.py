@@ -10,6 +10,11 @@ Target modes:
   * zip       -- give a password-protected .zip; each candidate is tried as the
                  archive password (ZipCrypto via stdlib; WinZip AES via optional
                  pyzipper). Behaves like hash mode for module selection.
+  * gpg       -- give a symmetric (`gpg -c`) OpenPGP file; each candidate is
+                 tried as the passphrase via the system `gpg`. Hash-mode
+                 selection. Slow (one gpg per guess) -- cheap modules only.
+  * sshkey    -- give an encrypted OpenSSH / PEM private key; each candidate is
+                 tried via `ssh-keygen -y`. Hash-mode selection. Slow.
 
 Attacks are pluggable modules in ./modules, run cheapest-first under a budget.
 
@@ -19,6 +24,8 @@ Examples:
   ./crack.py --hash 5f4dcc3b5aa765d61d8327deb882cf99 --algo md5
   ./crack.py --hashfile hashes.txt --algo sha256 --user jsmith --dob 1990-05-01
   ./crack.py --zip secret.zip --word acme --dob 1990-05-01 --jobs 4
+  ./crack.py --gpg secret.txt.gpg --word acme --jobs 4        # symmetric OpenPGP
+  ./crack.py --sshkey id_ed25519 --wordlist rockyou.txt --jobs 4
   ./crack.py --hash <h> --algo md5 --brute --charset dl --min 4 --max 6
   ./crack.py -p 'Password2024!' --rules-file rules/starter.rule
   ./crack.py -p 'hunter1990' --hybrid-mask '?d?d?d?d'
@@ -39,7 +46,9 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from core.context import CrackContext, Hints, Limits
-from core.matcher import HashMatcher, PlaintextMatcher, ZipMatcher
+from core.matcher import (
+    GpgMatcher, HashMatcher, PlaintextMatcher, SshKeyMatcher, ZipMatcher,
+)
 from core import dotenv, estimate, opinion, rules_engine, shapes, term, wordlists
 import modules
 from core.runner import Runner
@@ -113,6 +122,12 @@ def build_args():
     tgt.add_argument("--zip", dest="zip_", metavar="PATH",
                      help="password-protected .zip to crack (ZipCrypto via stdlib; "
                           "WinZip AES needs the optional 'pyzipper')")
+    tgt.add_argument("--gpg", dest="gpg_", metavar="PATH",
+                     help="symmetric OpenPGP file (gpg -c) to crack -- needs the "
+                          "system 'gpg'; slow (one gpg per guess), use --jobs N")
+    tgt.add_argument("--sshkey", dest="sshkey_", metavar="PATH",
+                     help="encrypted OpenSSH / PEM private key to crack -- needs "
+                          "'ssh-keygen'; slow (bcrypt-pbkdf), use --jobs N")
     tgt.add_argument("--algo", default="md5",
                      help="hash algo: md5/sha1/sha256/sha512/... or bcrypt (default md5)")
     tgt.add_argument("--salt-prefix", default="", help="salt prepended before hashing")
@@ -217,6 +232,22 @@ def resolve_target(args):
             sys.exit(1)
         kind = "AES" if m._aes else "ZipCrypto"
         return m, None, f"zip archive {os.path.basename(args.zip_)} ({kind}, entry {m._entry!r})"
+
+    if args.gpg_:
+        try:
+            m = GpgMatcher(args.gpg_)
+        except (OSError, ValueError) as exc:
+            print(f"  ! --gpg: {exc}")
+            sys.exit(1)
+        return m, None, f"symmetric OpenPGP file {os.path.basename(args.gpg_)}"
+
+    if args.sshkey_:
+        try:
+            m = SshKeyMatcher(args.sshkey_)
+        except (OSError, ValueError) as exc:
+            print(f"  ! --sshkey: {exc}")
+            sys.exit(1)
+        return m, None, f"encrypted private key {os.path.basename(args.sshkey_)}"
 
     if args.hash_ or args.hashfile:
         targets = []

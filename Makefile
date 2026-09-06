@@ -10,6 +10,7 @@ help:
 	@echo "  make run ARGS=\"-p 'Summer2024!'\"   run crack.py with ARGS"
 	@echo "  make modules                         list available attack modules"
 	@echo "  make args                            list crack.py's CLI flags (--help)"
+	@echo "  make detailed-args                   show all parameters"
 	@echo "  make audit                           quick self-test against a known weak password"
 	@echo "  make script                          run test.sh"
 	@echo "  make dict                            dictionaries used"
@@ -23,6 +24,9 @@ modules:
 
 args:
 	./crack.py --help
+
+detailed-args:
+	head -110 ./test.sh | tail -77 | glow
 
 audit:
 	@./crack.py -p 'password123' --module-budget 100k --budget 500k; $(call keep3)

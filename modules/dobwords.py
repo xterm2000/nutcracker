@@ -17,6 +17,9 @@ How much structure it builds is controlled by `--depth` (default 1):
   depth 2  + <relation-word><date>[<hint-token>]     e.g. mama19491604solomakha
   depth 3  + <hint-token><date><hint-token>, and <word><word><date>
 
+"<date>" includes the bare 4-digit and 2-digit year, so depth 3 also reaches
+e.g. sofiya1949winecoor.
+
 Higher depth multiplies the keyspace fast, so it raises its own budget and
 is opt-in.
 """
@@ -86,7 +89,11 @@ class DobWordsModule:
             return
         d, m, y = dob
         window = birthday_window(d, m, y)
-        dates = window + generation_dates(d, m, y)
+        # the bare year / 2-digit year -- 'sofiya1949', 'sofiya1949winecoor' are
+        # as common as the full-date shapes and nothing else here emits them
+        year_forms = [str(y), str(y)[2:]]
+        dates = year_forms + window + generation_dates(d, m, y)
+        window = year_forms + window
         tokens = list(ctx.hints.tokens())
 
         seen: set[str] = set()
@@ -96,6 +103,21 @@ class DobWordsModule:
                 seen.add(v)
                 return True
             return False
+
+        # high-value + tiny: hint tokens glued to the bare year, both orders,
+        # and (depth 3) a hint token on each side -- 'sofiya1949',
+        # 'sofiya1949winecoor'. Emitted first so the big date sweeps below
+        # can't exhaust the budget before reaching it.
+        for a in tokens:
+            for base in (a, a.capitalize()):
+                for yf in year_forms:
+                    for v in (base + yf, yf + base):
+                        if emit(v):
+                            yield v
+                    if self.depth >= 3:
+                        for b in tokens:
+                            if emit(base + yf + b):
+                                yield base + yf + b
 
         # depth 1: <hint-token><date>  (window dates first)
         for suf in dates:

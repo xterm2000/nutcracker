@@ -3,8 +3,10 @@
 A modular dictionary / pattern password cracker. **Research & educational use only** —
 use it to audit the guessability of passwords you are authorised to test.
 
-Pure Python 3.12 standard library. The only optional dependency is `bcrypt`
-(`pip install bcrypt`), needed solely for `--algo bcrypt`.
+Pure Python 3.12 standard library. The only optional *package* is `bcrypt`
+(`pip install bcrypt`), needed solely for `--algo bcrypt` (WinZip-AES `--zip`
+also wants `pyzipper`). `--gpg` / `--sshkey` shell out to the system `gpg` /
+`ssh-keygen` binaries — no Python package, but those tools must be installed.
 
 ```bash
 ./crack.py -p 'Summer2024!'
@@ -14,13 +16,34 @@ Pure Python 3.12 standard library. The only optional dependency is `bcrypt`
 
 ## How it works
 
-The tool has **three target modes**:
+The tool has **five target modes**:
 
 | Mode | How you invoke it | What it tells you |
 |------|-------------------|-------------------|
 | **plaintext** (guessability audit) | `-p PASSWORD` (or prompt) | *whether* the enabled attacks reach the password, which module found it, and at what **rank** (how many guesses in) |
 | **hash** (preimage search) | `--hash HEX` / `--hashfile FILE` + `--algo` | runs the same candidate generators as a real cracking run against your hash(es) |
 | **zip** (archive password) | `--zip archive.zip` | tries each candidate as the archive password (ZipCrypto built in; WinZip AES needs `pip install pyzipper`) |
+| **gpg** (symmetric OpenPGP) | `--gpg file.gpg` | tries each candidate as the passphrase of a `gpg -c` file, via the system `gpg`. **Symmetric only** — see caveats below |
+| **sshkey** (private-key passphrase) | `--sshkey id_ed25519` | tries each candidate as the passphrase of an encrypted OpenSSH / PEM private key, via `ssh-keygen -y` |
+
+`gpg` and `sshkey` behave like **hash** mode for module selection, but each guess
+is a **subprocess spawn** (~1–5 ms floor) against a **deliberately slow** KDF
+(OpenPGP S2K, OpenSSH bcrypt-pbkdf). Realistic scope: `context`, `pins`,
+`dictionary`, and `rules` at a modest `--module-budget` — **not** `--mask` /
+`--brute` over any real keyspace. Raise `--jobs N` (near-linear speed-up, CPU-bound
+like ZipCrypto). Further caveats:
+
+- **`--gpg` is symmetric-only.** A public-key-encrypted file (`gpg -e`) can't be
+  attacked with a passphrase guess — it needs the recipient's secret key. A bare
+  exported secret key (`gpg --export-secret-keys`) isn't supported either (`gpg
+  --decrypt` won't verify its passphrase).
+- **`--sshkey` needs an *encrypted* key.** An unencrypted key errors out at startup
+  (nothing to crack). Works for both the modern OpenSSH format and legacy PEM.
+- Both need the binary on `PATH` (`gpg` / `gpg2`, `ssh-keygen`); a missing binary
+  exits with an install hint.
+- Each guess has a **10 s timeout**; a hang counts as a non-match, not a crash.
+- The crack-time ladder for these modes uses order-of-magnitude offline-cracker
+  rates (`gpg` ≈ 1e7/s on a GPU, `ssh-key` ≈ 5e3/s — bcrypt-pbkdf is slow by design).
 
 Candidates come from pluggable **modules** in `modules/`, run cheapest-first under a
 per-module budget (default 3M candidates) and a global hard stop (default 30M). Each
@@ -33,11 +56,12 @@ word×mask hybrids, masks/brute force, etc.
 ```
 
 Run order (cheapest / highest-value first, budget-eaters last):
-`context → pins → phone → sequences → keyboard → dictionary → permute → dates →
-rules → fuzz → dobwords → wordchain → hybrid → mask`. (`wordchain`'s plaintext
-decomposition runs early, at rank ~1; its hash-mode generator runs late. `dobwords`
-only does anything with `--dob`; `permute` only with `--permute`; `fuzz` only with
-`--fuzz`; `hybrid` only with `--hybrid-mask`; `mask` only with `--mask`/`--brute`.)
+`context → pins → phone → bip39 → wordchain → sequences → keyboard → dictionary →
+permute → dates → rules → fuzz → dobwords → hybrid → mask`. (`bip39` and
+`wordchain`'s plaintext decompositions run early, at rank ~1; their hash-mode
+generators run late. `dobwords` only does anything with `--dob`; `permute` only
+with `--permute`; `fuzz` only with `--fuzz`; `hybrid` only with `--hybrid-mask`;
+`mask` only with `--mask`/`--brute`.)
 
 Wordlists live in `data/` (passwords, first names, international given names,
 surnames, TV/film, world cities, English Wikipedia — ~240k unique words after
@@ -60,7 +84,7 @@ widen.
 | Answers | *at what rank* this would be guessed | *what* the password behind the digest is |
 | Cost per candidate | one `==` — effectively free | one hash; md5/sha fast, **bcrypt slow → add `--jobs N`** |
 | Budgets | rarely bite; the audit resolves fast | the real constraint — raise `--module-budget` / `--budget`, or narrow with `--only` |
-| `wordchain` | word-*breaks* the exact string (rank ~1 if it segments) | *generates* k-word chains — tune `--chain-words`, `--chain-vocab` |
+| `wordchain` / `bip39` | word-*break* the exact string (rank ~1 if it segments) | *generate* k-word chains — `wordchain` tunes `--chain-words` / `--chain-vocab`, `bip39` fixed at k≤4 |
 | First move | just run it, no flags | add every hint you have, *then* widen |
 
 `--zip archive.zip` is a third mode that behaves like **hash** for module selection
@@ -94,6 +118,7 @@ instead of a digest. ZipCrypto is built in; WinZip AES needs `pip install pyzipp
 | `dictionary` | the plain word, unchanged | — (it's cheap) |
 | `dates` | bare years, `DDMMYYYY`, `Summer2024`, month names | no date component expected |
 | `rules` | word + case / leet / digits / years — the common human pattern | — (supply `--rules-file` to swap the rule set) |
+| `bip39` | a target made of BIP-39 mnemonic words (seed phrase, or a short passphrase built from them) | any word isn't in the 2048-list (`wordchain` takes over) |
 | `wordchain` | passphrases, run-together words | a strong random string (it refuses correctly anyway) |
 | `permute` | you know most of a passphrase's words but not their order (or are missing one or two) | fewer than 2 `--word`/hint tokens (inert) |
 | `dobwords` | `--dob` known **and** you suspect name+birthday | no `--dob` (inert) |
@@ -224,6 +249,24 @@ order the other modules use). This reaches a 2-word — and, with a raised budge
 point of one). For a *known* phrase (a movie quote, a lyric) use `--wordlist` with a
 phrase list instead.
 
+### BIP-39 mnemonics
+
+The `bip39` module reads the target as a sequence of words from the 2048-word
+BIP-39 English list (`data/bip39.txt`):
+
+```bash
+./crack.py -p 'legal winner thank year wave sausage worth useful legal winner thank yellow'
+./crack.py -p 'abandonabilityzoo'          # run-together, still detected
+```
+
+In plaintext mode it word-breaks the exact target; ≥ 2 BIP-39 words and it
+reports the split. The guess estimate is `2048 ** words × separators`, so a real
+12/15/18/21/24-word seed phrase is flagged **strong** (out of offline
+brute-force reach) while a 2-4 word "clever" BIP-39 passphrase is **very weak /
+weak**. In hash mode it generates k=2..4 word chains from the 2048 words
+(budget-capped). It runs just before `wordchain` and claims the result for an
+all-BIP-39 phrase; `wordchain` handles any phrase with a non-BIP-39 word.
+
 ### Use what you know about the target (hints)
 
 Hints feed the `context` module (and `dates` for `--dob`): the tokens themselves,
@@ -321,6 +364,40 @@ Target : zip archive secret.zip (ZipCrypto, entry 'notes.txt')
   reported match is real (no ZipCrypto false positives).
 - Check what you have first: `unzip -v secret.zip` (Method column) or
   `7z l -slt secret.zip | grep Method`.
+
+### Crack a symmetric GPG file (`gpg -c`)
+
+```bash
+./crack.py --gpg secret.txt.gpg --jobs 4
+./crack.py --gpg secret.txt.gpg --word acme --dob 1990-05-01 --only context,pins,dictionary,rules
+```
+
+Each candidate is fed to `gpg --batch --pinentry-mode loopback --passphrase … --decrypt`.
+The header line reads `Target : symmetric OpenPGP file secret.txt.gpg`.
+
+- **Symmetric only.** `gpg -e` (public-key) files need the recipient's secret key,
+  not a passphrase — they can't be attacked here. A bare exported secret key isn't
+  supported either.
+- One `gpg` process per guess (~1–5 ms floor) and OpenPGP's S2K is iterated by
+  design, so keep to the cheap modules and a small `--module-budget`; `--mask` /
+  `--brute` are impractical. Raise `--jobs`.
+- Needs `gpg` (or `gpg2`) on `PATH`; a 10 s per-guess timeout treats a hang as a miss.
+
+### Crack an SSH private-key passphrase
+
+```bash
+./crack.py --sshkey ~/.ssh/id_ed25519 --jobs 4 --wordlist rockyou.txt
+./crack.py --sshkey id_rsa --only context,pins,dictionary,rules
+```
+
+Each candidate runs `ssh-keygen -y -P <cand> -f KEY` (prints the public key on
+success, writes nothing). Header: `Target : encrypted private key id_ed25519`.
+
+- The key **must be passphrase-protected** — an unencrypted key errors out at
+  startup. Both the modern OpenSSH format and legacy PEM `id_rsa` work.
+- Modern keys use **bcrypt-pbkdf** (very slow by design) — cheap modules only,
+  small budget, and `--jobs N` for the near-linear speed-up.
+- Needs `ssh-keygen` on `PATH`; 10 s per-guess timeout.
 
 ### Run only some attacks (fast, targeted)
 
@@ -473,7 +550,9 @@ explicitly (`500k` = 500,000, `1g` = 1,000,000,000).
 | Flag | Meaning | Default |
 |------|---------|---------|
 | `--zip PATH` | crack a password-protected .zip (ZipCrypto built in; AES needs `pyzipper`) | — |
-| `--jobs N` | worker processes for candidate testing (helps for `bcrypt` / `--zip`) | 1 |
+| `--gpg PATH` | crack a symmetric OpenPGP file (`gpg -c`); needs system `gpg`; slow — cheap modules only | — |
+| `--sshkey PATH` | crack an encrypted OpenSSH / PEM private-key passphrase; needs `ssh-keygen`; slow | — |
+| `--jobs N` | worker processes for candidate testing (helps for `bcrypt` / `--zip` / `--gpg` / `--sshkey`) | 1 |
 | `--limit N` | words loaded per wordlist file | all |
 | `--wordlist PATH` | extra wordlist, loaded before built-ins (repeatable) | — |
 | `--rules-file PATH` | hashcat-style rule file (replaces built-in mangling) | — |
@@ -508,6 +587,8 @@ PASSP='s3cr3t' ./test.sh                       # self-test: md5(PASSP), then cra
 HASH=<hex> ALGO=sha1 ./test.sh                 # crack a real digest
 HASH=0 PASSP='mary had a lamb' ./test.sh       # plaintext guessability audit (-p)
 ZIP=secret.zip WORDS='acme 1990' JOBS=4 ./test.sh
+GPG=secret.txt.gpg JOBS=4 MODULE_BUDGET=20 ONLY=context,pins,dictionary,rules ./test.sh
+SSHKEY=id_ed25519 WORDLIST=rockyou.txt JOBS=4 ./test.sh
 PASSP='Password2024!' FUZZ=1 PERMUTE=1 BUDGET=300 ./test.sh
 ```
 
@@ -516,6 +597,8 @@ Assembly pattern (abbreviated — see `test.sh` for the full set):
 ```bash
 read -ra WORD_LIST <<< "$WORDS"
 if   [[ -n "$ZIP" ]];      then ARGS=(--zip "$ZIP")
+elif [[ -n "$GPG" ]];      then ARGS=(--gpg "$GPG")
+elif [[ -n "$SSHKEY" ]];   then ARGS=(--sshkey "$SSHKEY")
 elif [[ "$HASH" == 0 ]];   then ARGS=(-p "$PASSP")           # empty PASSP -> crack.py prompts
 else                            ARGS=(--hash "$HASH" --algo "$ALGO")
 fi
@@ -529,8 +612,10 @@ rc=0; time ./crack.py "${ARGS[@]}" || rc=$?
 
 - **Target mode** is `HASH`: unset ⇒ self-test on `md5(PASSP)` (or `${ALGO}sum` if that
   coreutils tool exists); `<hex>` ⇒ crack that digest; **`0` ⇒ plaintext audit** via `-p`
-  (empty `PASSP` ⇒ `crack.py` prompts, `SHOW=1` ⇒ visible). `HASHFILE` and `ZIP` override
-  the target entirely. `LIST_MODULES=1` just prints the module list and exits.
+  (empty `PASSP` ⇒ `crack.py` prompts, `SHOW=1` ⇒ visible). `HASHFILE`, `ZIP`, `GPG`
+  (symmetric OpenPGP file) and `SSHKEY` (encrypted private key) override the target
+  entirely — the last two are subprocess-slow, so pair them with a small `MODULE_BUDGET`,
+  `ONLY=…` and a high `JOBS`. `LIST_MODULES=1` just prints the module list and exits.
 - **Every knob is added only when non-empty**, so the crack.py default applies when you
   leave one blank. `WORDS` and `WORDLIST` split on spaces into repeated `--word` /
   `--wordlist`; everything else maps 1:1.
@@ -557,8 +642,8 @@ brute, …) and names the knob that would most likely reach it, e.g.:
     - embedded date '16041983' (DDMMYYYY): pass --dob <date> and --depth 2
 ```
 
-It is advisory only and never changes the result or the rank. Hash / zip runs skip it
-(there is no plaintext to inspect).
+It is advisory only and never changes the result or the rank. Hash / zip / gpg /
+sshkey runs skip it (there is no plaintext to inspect).
 
 A `NOT FOUND` also prints a **rough strength estimate** — a floor, not a proof:
 
@@ -583,7 +668,7 @@ Hash mode gets the floor only: a digest reveals nothing about structure.
 
 ```
 crack.py         CLI entry point + argument parsing
-core/            context (shared state, hints, limits), matcher (plaintext/hash/zip),
+core/            context (shared state, hints, limits), matcher (plaintext/hash/zip/gpg/sshkey),
                  wordlists (loader), runner (budgeted pipeline), rules_engine (hashcat rules),
                  shapes (NOT-FOUND gap diagnosis + CRACKED assessment),
                  term (muted ANSI colour), parallel (--jobs fork pool)
