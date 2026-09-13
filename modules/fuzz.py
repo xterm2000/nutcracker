@@ -3,7 +3,7 @@
 
 Covers the one gap left by ``rules`` / ``leet_variants`` -- an arbitrary
 one-off swap that is not in the leet map (``passward``, ``monkez``,
-``drygon``) or a fat-finger typo baked into the password (``passworf``).
+``drygon``) or a fat-finger typo embedded in the password (``passworf``).
 
 Keyspace is ``vocab * L * (A-1)`` for N=1 and explodes for N=2, so it is
 opt-in (``--fuzz 1|2``), always **vocab-capped** (top ``--fuzz-vocab`` words

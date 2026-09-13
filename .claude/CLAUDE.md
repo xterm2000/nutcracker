@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Purpose & scope
 
 Modular dictionary / pattern password cracker — **research & educational use only**.
-Pure standard-library Python 3.12 (the parent-folder gotchas about venvs don't apply
+Pure standard-library Python 3.12 (the parent-folder caveats about venvs don't apply
 here — there are no dependencies to install). Two optional Python deps, both
 lazy-imported and each needed only for one feature: `bcrypt` (`--algo bcrypt`) and
 `pyzipper` (`--zip` when the archive uses WinZip AES; ZipCrypto archives need nothing).
@@ -14,7 +14,7 @@ and `ssh-keygen` for `--sshkey` (encrypted private key) — the matcher shells o
 per candidate. One optional *integration*, no package: `core/opinion.py` calls a local
 **Ollama** over `urllib` when `OLLAMA_MODEL` is set — an LLM second opinion at end of run.
 
-## Gotchas / warnings
+## Caveats / warnings
 
 - Runs on headless VM `shiva` — no display, no browser. Nothing here needs one.
 - **Stdlib only.** No `requirements.txt`, no venv. Do not add a dependency without asking.
@@ -35,7 +35,7 @@ per candidate. One optional *integration*, no package: `core/opinion.py` calls a
 - The **Ollama second opinion is opt-in and must stay non-fatal**: off unless `OLLAMA_MODEL`
   is set, and every failure path returns `(None, reason)` — it must never raise or change
   the exit code. In `-p` mode the report sent to Ollama contains the plaintext.
-- **Testing gotcha:** `crack.py` auto-loads `.env` at startup (`dotenv.load`), so if
+- **Testing caveat:** `crack.py` auto-loads `.env` at startup (`dotenv.load`), so if
   `OLLAMA_MODEL` is set there **every run fires a real inference call at the remote
   Ollama GPU** (`OLLAMA_URL` in `.env` points off-box). When running `./crack.py`
   repeatedly to verify a change, prefix `OLLAMA_MODEL= ` to suppress the opinion call —
@@ -238,7 +238,7 @@ vocab × mask × sides, printed via `note()`. Appended only when `--hybrid-mask`
 `fuzz` (`modules/fuzz.py`) is opt-in via `--fuzz N` (N clamped to 1–2). It yields the
 top `--fuzz-vocab` words (default 2000) *plus the hint tokens* with up to N
 single-character substitutions — length-preserving, i.e. Hamming distance ≤ N — the
-one gap `rules`/`leet_variants` leave (an arbitrary non-leet swap, a baked-in typo).
+one gap `rules`/`leet_variants` leave (an arbitrary non-leet swap, an embedded typo).
 `--fuzz-charset`: `sub` (default, `a–z0–9!@#$%`), `kbd` (keyboard-adjacent keys only,
 from a QWERTY-grid adjacency map built at import), a `mask.CHARSETS` spec, or a literal
 string. Variants already in the wordlist are skipped (`dictionary` covers them);

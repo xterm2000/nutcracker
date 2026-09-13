@@ -455,7 +455,7 @@ Keyspace = vocab × mask × sides, printed up front — keep the mask small.
 `--fuzz-vocab` words (default 2000) **plus the hint tokens**, with up to `N`
 single-character substitutions (same length — Hamming distance ≤ N). This is the
 one thing `rules`/leet don't cover: an arbitrary one-off swap (`passwyrd`,
-`monkez`, `drygon`) or a fat-finger typo baked in (`passworf`). Variants that are
+`monkez`, `drygon`) or a fat-finger typo embedded in the word (`passworf`). Variants that are
 themselves dictionary words are skipped (`dictionary` already tried them).
 
 Keyspace is `vocab × L × (A−1)` for N=1 and explodes for N=2, so it is always
